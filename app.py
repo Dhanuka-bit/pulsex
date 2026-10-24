@@ -9,11 +9,13 @@ import pandas as pd
 import streamlit as st
 import accounts
 import i18n
+import brand
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 APP_NAME, TAGLINE = "PulseX", "Catch every move."
 st.set_page_config(page_title=f"{APP_NAME} · Crypto Signals", page_icon="⚡", layout="wide")
+st.sidebar.markdown(brand.sidebar_logo(APP_NAME), unsafe_allow_html=True)
 t = i18n.setup()
 
 
@@ -240,47 +242,8 @@ def obi(ex, s):
         return None
 
 
-# ---------------- Indicators & regime-adaptive scoring ----------------
-def ind(df):
-    d = df.copy()
-    c, h, l = d["close"], d["high"], d["low"]
-    for n in (9, 21, 50, 200):
-        d[f"ema{n}"] = c.ewm(span=n, adjust=False).mean()
-    dl = c.diff()
-    g = dl.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
-    ls = (-dl.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean()
-    d["rsi"] = 100 - 100 / (1 + g / ls.replace(0, np.nan))
-    m = c.ewm(span=12, adjust=False).mean() - c.ewm(span=26, adjust=False).mean()
-    d["macd_h"] = m - m.ewm(span=9, adjust=False).mean()
-    tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
-    d["atr"] = tr.ewm(alpha=1 / 14, adjust=False).mean()
-    up, dn = h.diff(), -l.diff()
-    pdm = pd.Series(np.where((up > dn) & (up > 0), up, 0.0), index=d.index)
-    ndm = pd.Series(np.where((dn > up) & (dn > 0), dn, 0.0), index=d.index)
-    d["pdi"] = 100 * pdm.ewm(alpha=1 / 14, adjust=False).mean() / d["atr"]
-    d["ndi"] = 100 * ndm.ewm(alpha=1 / 14, adjust=False).mean() / d["atr"]
-    dx = 100 * (d["pdi"] - d["ndi"]).abs() / (d["pdi"] + d["ndi"]).replace(0, np.nan)
-    d["adx"] = dx.ewm(alpha=1 / 14, adjust=False).mean()
-    mid, sd = c.rolling(20).mean(), c.rolling(20).std()
-    d["bb_u"], d["bb_l"] = mid + 2 * sd, mid - 2 * sd
-    d["pb"] = (c - d["bb_l"]) / (d["bb_u"] - d["bb_l"])
-    d["vr"] = d["volume"] / d["volume"].rolling(20).mean()
-    return d
-
-
-def score_df(d):
-    """Trending market -> trend-following score. Ranging market -> mean-reversion score."""
-    trend = (np.where(d.ema9 > d.ema21, 1, -1) + np.where(d.close > d.ema50, 1, -1)
-             + np.where(d.ema50 > d.ema200, 1, -1) + np.where(d.macd_h > 0, 1, -1)
-             + np.where(d.pdi > d.ndi, 1, -1)
-             + np.select([(d.rsi > 50) & (d.rsi <= 70), (d.rsi < 50) & (d.rsi >= 30)], [1, -1], 0)
-             + np.where(d.vr > 1.5, np.where(d.close > d.open, 0.5, -0.5), 0))
-    pb = d.pb
-    rng = (np.select([d.rsi < 30, d.rsi < 40, d.rsi > 70, d.rsi > 60], [2, 1, -2, -1], 0)
-           + np.select([pb < 0.05, pb < 0.2, pb > 0.95, pb > 0.8], [2, 1, -2, -1], 0)
-           + np.where((d.close > d.open) & (d.close.shift() < d.open.shift()) & (pb < 0.3), 1, 0)
-           - np.where((d.close < d.open) & (d.close.shift() > d.open.shift()) & (pb > 0.7), 1, 0))
-    return pd.Series(np.where(d.adx >= 22, trend, rng), index=d.index)
+# ---------------- Indicators & regime-adaptive scoring (see engine.py) ----------------
+from engine import ind, score_df, backtest_ix
 
 
 def htf_bias(df):
@@ -290,29 +253,6 @@ def htf_bias(df):
     if l.close < l.ema50 and l.ema21 < l.ema50:
         return -1
     return 0
-
-
-def backtest(d, thr, mult, rr=2.0, maxbars=60):
-    sc, cl, hi, lo, at = score_df(d).values, d.close.values, d.high.values, d.low.values, d.atr.values
-    res, i, n = [], 60, len(d)
-    while i < n - 1:
-        if abs(sc[i]) >= thr and at[i] > 0:
-            sg, r, e = (1 if sc[i] > 0 else -1), at[i] * mult, cl[i]
-            sl, tp, out, j = e - sg * r, e + sg * rr * r, None, i
-            for j in range(i + 1, min(n, i + 1 + maxbars)):
-                if (lo[j] <= sl) if sg > 0 else (hi[j] >= sl):
-                    out = -1.0
-                    break
-                if (hi[j] >= tp) if sg > 0 else (lo[j] <= tp):
-                    out = rr
-                    break
-            if out is None:
-                out = (cl[j] - e) * sg / r
-            res.append(out)
-            i = j + 1
-        else:
-            i += 1
-    return res
 
 
 def stop_distance(d, sg, price, atr, mult, smart):
@@ -327,17 +267,38 @@ def stop_distance(d, sg, price, atr, mult, smart):
 def reasons(l):
     def ic(v):
         return "🟢" if v > 0 else ("🔴" if v < 0 else "🟡")
+    sg = lambda c: 1 if c else -1
     trending = l.adx >= 22
     out = [(0, t(f"Market regime: {'TRENDING' if trending else 'RANGING'} (ADX {l.adx:.1f}) - "
                  f"{'trend-following' if trending else 'mean-reversion'} rules used",
                  f"වෙළඳපොළ තත්ත්වය: {'TREND එකක්' if trending else 'RANGE එකක්'} (ADX {l.adx:.1f})")),
-           (1 if l.ema9 > l.ema21 else -1, t(f"EMA9 {'above' if l.ema9 > l.ema21 else 'below'} EMA21 (short trend)", f"EMA9 {'>' if l.ema9 > l.ema21 else '<'} EMA21 (කෙටි trend)")),
-           (1 if l.close > l.ema50 else -1, t(f"Price {'above' if l.close > l.ema50 else 'below'} EMA50 (medium trend)", f"මිල {'>' if l.close > l.ema50 else '<'} EMA50 (මධ්‍ය trend)")),
-           (1 if l.ema50 > l.ema200 else -1, t(f"EMA50 {'above' if l.ema50 > l.ema200 else 'below'} EMA200 (long trend)", f"EMA50 {'>' if l.ema50 > l.ema200 else '<'} EMA200 (දිගු trend)")),
-           (1 if l.macd_h > 0 else -1, t(f"MACD momentum {'positive' if l.macd_h > 0 else 'negative'}", f"MACD momentum {'ධනාත්මකයි' if l.macd_h > 0 else 'සෘණාත්මකයි'}")),
+           (sg(l.ema9 > l.ema21), t(f"EMA9 {'above' if l.ema9 > l.ema21 else 'below'} EMA21 (short trend)", f"EMA9 {'>' if l.ema9 > l.ema21 else '<'} EMA21 (කෙටි trend)")),
+           (sg(l.close > l.ema50), t(f"Price {'above' if l.close > l.ema50 else 'below'} EMA50 (medium trend)", f"මිල {'>' if l.close > l.ema50 else '<'} EMA50 (මධ්‍ය trend)")),
+           (sg(l.ema50 > l.ema200), t(f"EMA50 {'above' if l.ema50 > l.ema200 else 'below'} EMA200 (long trend)", f"EMA50 {'>' if l.ema50 > l.ema200 else '<'} EMA200 (දිගු trend)")),
+           (int(l.st_dir), t(f"Supertrend is {'bullish' if l.st_dir > 0 else 'bearish'}", f"Supertrend {'ඉහළට' if l.st_dir > 0 else 'පහළට'}")),
+           ((1 if l.close > l.ich_top else -1 if l.close < l.ich_bot else 0),
+            t("Price vs Ichimoku cloud: " + ("above" if l.close > l.ich_top else "below" if l.close < l.ich_bot else "inside (no trend)"),
+              "Ichimoku cloud එක සමඟ මිල: " + ("ඉහළින්" if l.close > l.ich_top else "පහළින්" if l.close < l.ich_bot else "ඇතුළත (trend නැත)"))),
+           (sg(l.macd_h > 0), t(f"MACD momentum {'positive' if l.macd_h > 0 else 'negative'}", f"MACD momentum {'ධනාත්මකයි' if l.macd_h > 0 else 'සෘණාත්මකයි'}")),
            (1 if l.rsi < 30 else (-1 if l.rsi > 70 else 0), f"RSI {l.rsi:.1f}"),
-           (1 if l.pb < 0.05 else (-1 if l.pb > 0.95 else 0), f"Bollinger %B {l.pb:.2f}"),
-           ((1 if l.close > l.open else -1) if l.vr > 1.5 else 0, t(f"Volume {l.vr:.1f}x average", f"Volume සාමාන්‍යයෙන් {l.vr:.1f} ගුණයක්"))]
+           (1 if l.stoch_k < 0.1 else (-1 if l.stoch_k > 0.9 else 0), f"Stochastic RSI {l.stoch_k * 100:.0f}"),
+           (1 if l.pb < 0.05 else (-1 if l.pb > 0.95 else 0), f"Bollinger %B {l.pb:.2f}" + (" · squeeze" if l.squeeze else "")),
+           (1 if l.cci < -150 else (-1 if l.cci > 150 else 0), f"CCI {l.cci:.0f}"),
+           (sg(l.obv > l.obv_ema), t(f"OBV volume flow {'rising' if l.obv > l.obv_ema else 'falling'}", f"OBV volume flow {'ඉහළට' if l.obv > l.obv_ema else 'පහළට'}")),
+           (1 if l.mfi < 20 else (-1 if l.mfi > 80 else 0), f"MFI {l.mfi:.0f}"),
+           (sg(l.close > l.vwap), t(f"Price {'above' if l.close > l.vwap else 'below'} VWAP", f"මිල VWAP {'ට උඩින්' if l.close > l.vwap else 'ට යටින්'}")),
+           ((1 if l.close > l.dh20 else -1 if l.close < l.dl20 else 0),
+            t("20-bar breakout " + ("UP" if l.close > l.dh20 else "DOWN" if l.close < l.dl20 else "- none"),
+              "බාර් 20 breakout " + ("ඉහළට" if l.close > l.dh20 else "පහළට" if l.close < l.dl20 else "- නැත"))),
+           (int(l.struct), t("Market structure: " + ("higher highs & lows" if l.struct > 0 else "lower highs & lows" if l.struct < 0 else "mixed"),
+                              "වෙළඳපොළ ව්‍යුහය: " + ("ඉහළ high/low" if l.struct > 0 else "පහළ high/low" if l.struct < 0 else "මිශ්‍ර"))),
+           ((1 if l.bull_pat else -1 if l.bear_pat else 0),
+            t("Candle pattern: " + ("bullish" if l.bull_pat else "bearish" if l.bear_pat else "none"),
+              "Candle pattern: " + ("bullish" if l.bull_pat else "bearish" if l.bear_pat else "නැත"))),
+           ((1 if l.bull_div else -1 if l.bear_div else 0),
+            t("RSI divergence: " + ("bullish" if l.bull_div else "bearish" if l.bear_div else "none"),
+              "RSI divergence: " + ("bullish" if l.bull_div else "bearish" if l.bear_div else "නැත"))),
+           ((sg(l.close > l.open)) if l.vr > 1.5 else 0, t(f"Volume {l.vr:.1f}x average", f"Volume සාමාන්‍යයෙන් {l.vr:.1f} ගුණයක්"))]
     return [f"{ic(v)} {x}" for v, x in out]
 
 
@@ -355,10 +316,37 @@ def card(side, grade, head, sub):
         f"<div style='font-size:14px;margin-top:6px;opacity:.85'>{sub}</div></div>", unsafe_allow_html=True)
 
 
-# ---------------- Sidebar ----------------
+# ---------------- Header & navigation ----------------
+st.markdown(brand.css(), unsafe_allow_html=True)
+_nl = len(i18n.LANGS)
+st.markdown(brand.hero_html(APP_NAME, TAGLINE, [
+    t("⚡ Live signals", "⚡ සජීවී signals"), t("🔎 Market scanner", "🔎 වෙළඳපොළ ස්කෑනර්"),
+    t(f"🌐 {_nl} languages", f"🌐 භාෂා {_nl}ක්"), t("🌓 Light & dark", "🌓 Light සහ Dark"),
+    t("🆓 Free to use", "🆓 නොමිලේ")]), unsafe_allow_html=True)
+tick = st.empty()
+st.markdown("<div class='mobile-hint'>" + t("📱 Tap the ☰ / arrow at the top-left to choose exchange, coin and settings.",
+            "📱 exchange, coin සහ සැකසුම් තෝරන්න උඩ වම් කෙළවරේ ☰ / ඊතලය ඔබන්න.") + "</div>", unsafe_allow_html=True)
+
+PAGES = ["signal", "scan", "new", "fund", "port", "guide"]
+
+
+def _nav_label(k):
+    return {"signal": t("⚡ Signal", "⚡ Signal"), "scan": t("🔎 Scanner", "🔎 ස්කෑනර්"),
+            "new": t("🆕 New listings", "🆕 අලුත් coins"), "fund": t("📊 Fundamentals", "📊 මූලික දත්ත"),
+            "port": t("💼 Portfolio", "💼 Portfolio"), "guide": t("❓ Guide", "❓ මාර්ගෝපදේශය")}[k]
+
+
+if hasattr(st, "segmented_control"):
+    _pg = st.segmented_control("nav", PAGES, format_func=_nav_label, key="nav", label_visibility="collapsed",
+                               **({} if "nav" in st.session_state else {"default": "signal"}))
+else:
+    _pg = st.radio("nav", PAGES, format_func=_nav_label, key="nav", horizontal=True, label_visibility="collapsed")
+page = _pg or st.session_state.get("_page", "signal")
+st.session_state["_page"] = page
+
+# ---------------- Sidebar (only shows what the current page needs) ----------------
+P = st.session_state.setdefault("_P", {})  # remembers every setting while its widget is hidden
 qp = st.query_params
-st.sidebar.title(f"⚡ {APP_NAME}")
-st.sidebar.caption("by Software owners")
 accounts.sidebar_box(t)
 OK = reachable()
 if not OK:
@@ -367,94 +355,86 @@ if not OK:
     st.error(t("No exchange could be reached from this server. Please try again in a minute.",
                "මෙම server එකෙන් කිසිදු exchange එකකට සම්බන්ධ විය නොහැක. විනාඩියකින් නැවත උත්සාහ කරන්න."))
     st.stop()
-_want = qp.get("ex") if qp.get("ex") in OK else OK[0]
-ex_pref = st.sidebar.selectbox(t("Exchange (futures)", "එක්ස්චේන්ජ් එක (futures)"), OK, index=OK.index(_want))
+show_ex = page in ("signal", "scan", "new", "fund")
+show_coin = page in ("signal", "fund")
+show_adv = page in ("signal", "scan")
+
+_ex0 = P.get("ex") if P.get("ex") in OK else (qp.get("ex") if qp.get("ex") in OK else OK[0])
+if show_ex:
+    if st.session_state.get("w_ex") not in OK:
+        st.session_state["w_ex"] = _ex0
+    ex_pref = st.sidebar.selectbox(t("Exchange (futures)", "එක්ස්චේන්ජ් එක (futures)"), OK, key="w_ex")
+else:
+    ex_pref = _ex0
+P["ex"] = ex_pref
 try:
     ex, mk = market_any(ex_pref)
 except Exception as e:
     st.error(t("Exchange data could not be loaded.", "Exchange දත්ත load කළ නොහැක.") + f" ({e})")
     st.stop()
-if len(OK) < len(EX):
+if show_ex and len(OK) < len(EX):
     st.sidebar.caption(t("ℹ️ Only exchanges available from this server are listed.",
                          "ℹ️ මෙම server එකෙන් සම්බන්ධ විය හැකි exchanges පමණක් පෙන්වයි."))
 coins = list(dict.fromkeys(mk.base))
 NEW = set(mk[(mk.listed > 0) & ((time.time() * 1000 - mk.listed) < 14 * 86400000)].base)
-cur = st.session_state.get("coin_sel", qp.get("coin", "BTC"))
-st.session_state["coin_sel"] = cur if cur in coins else ("BTC" if "BTC" in coins else coins[0])
-coin = st.sidebar.selectbox(t(f"Coin ({len(coins)} pairs - type to search)", f"කොයින් එක (pairs {len(coins)} - ටයිප් කර සොයන්න)"),
-                            coins, key="coin_sel", format_func=lambda c: f"{c} 🆕" if c in NEW else c)
-with st.sidebar.expander(t("⚙️ Advanced settings", "⚙️ උසස් සැකසුම්")):
-    sens = st.radio(t("Sensitivity", "සංවේදීතාව"), ["Conservative", "Balanced", "Aggressive"], index=1,
-                    help=t("Conservative = fewer but stronger signals", "Conservative = signals අඩුයි, නමුත් ශක්තිමත්"))
-    strict = st.checkbox(t("Strict accuracy mode", "Strict accuracy mode"), True,
-                         help=t("Blocks signals when higher timeframes, funding, overextension or the pair's backtest disagree.",
-                                "ඉහළ කාල රාමු, funding, අධික ලෙස දුර ගිය මිල හෝ backtest විරුද්ධ නම් signal එක නවත්වයි."))
-    smart = st.checkbox(t("Smart stop-loss (behind swing high/low)", "Smart stop-loss (swing high/low පිටුපස)"), True)
-    atr_mult = st.slider(t("Fixed stop-loss (x ATR)", "ස්ථාවර stop-loss (x ATR)"), 1.0, 3.0, 1.5, 0.1)
-    closed = st.checkbox(t("Closed candles only (no repainting)", "වැසුණු candles පමණක්"), True)
-    custom_tf = st.number_input(t("Custom timeframe (minutes, 0 = off)", "අභිමත කාල රාමුව (මිනිත්තු, 0 = off)"), 0, 10080, 0)
-    balance = st.number_input(t("Account balance (USDT)", "ගිණුම් ශේෂය (USDT)"), 10.0, 10_000_000.0, 1000.0)
-    risk = st.slider(t("Risk per trade (%)", "එක ට්‍රේඩ් එකකට අවදානම (%)"), 0.25, 5.0, 1.0, 0.25)
-    refresh = st.selectbox(t("Auto refresh", "Auto refresh"), ["Off", "15s", "30s", "60s"], index=2)
-THR = {"Conservative": 5.0, "Balanced": 3.5, "Aggressive": 2.5}[sens]
+cur = st.session_state.get("coin_sel", P.get("coin", qp.get("coin", "BTC")))
+cur = cur if cur in coins else ("BTC" if "BTC" in coins else coins[0])
+if show_coin:
+    st.session_state["coin_sel"] = cur
+    coin = st.sidebar.selectbox(t(f"Coin ({len(coins)} pairs - type to search)", f"කොයින් එක (pairs {len(coins)} - ටයිප් කර සොයන්න)"),
+                                coins, key="coin_sel", format_func=lambda c: f"{c} 🆕" if c in NEW else c)
+else:
+    coin = cur
+P["coin"] = coin
+
+ADV = {"sens": "Balanced", "strict": True, "smart": True, "atr_mult": 1.5, "closed": True,
+       "custom_tf": 0, "balance": 1000.0, "risk": 1.0, "refresh": "30s"}
+if show_adv:
+    for _k, _d in ADV.items():
+        st.session_state.setdefault("w_" + _k, P.get(_k, _d))
+    with st.sidebar.expander(t("⚙️ Advanced settings", "⚙️ උසස් සැකසුම්")):
+        sens = st.radio(t("Sensitivity", "සංවේදීතාව"), ["Conservative", "Balanced", "Aggressive"], key="w_sens",
+                        help=t("Conservative = fewer but stronger signals", "Conservative = signals අඩුයි, නමුත් ශක්තිමත්"))
+        strict = st.checkbox(t("Strict accuracy mode", "Strict accuracy mode"), key="w_strict",
+                             help=t("Blocks signals when higher timeframes, funding, overextension or the pair's backtest disagree.",
+                                    "ඉහළ කාල රාමු, funding, අධික ලෙස දුර ගිය මිල හෝ backtest විරුද්ධ නම් signal එක නවත්වයි."))
+        smart = st.checkbox(t("Smart stop-loss (behind swing high/low)", "Smart stop-loss (swing high/low පිටුපස)"), key="w_smart")
+        atr_mult = st.slider(t("Fixed stop-loss (x ATR)", "ස්ථාවර stop-loss (x ATR)"), 1.0, 3.0, step=0.1, key="w_atr_mult")
+        closed = st.checkbox(t("Closed candles only (no repainting)", "වැසුණු candles පමණක්"), key="w_closed")
+        custom_tf = st.number_input(t("Custom timeframe (minutes, 0 = off)", "අභිමත කාල රාමුව (මිනිත්තු, 0 = off)"), 0, 10080, key="w_custom_tf")
+        balance = st.number_input(t("Account balance (USDT)", "ගිණුම් ශේෂය (USDT)"), 10.0, 10_000_000.0, key="w_balance")
+        risk = st.slider(t("Risk per trade (%)", "එක ට්‍රේඩ් එකකට අවදානම (%)"), 0.25, 5.0, step=0.25, key="w_risk")
+        refresh = st.selectbox(t("Auto refresh", "Auto refresh"), ["Off", "15s", "30s", "60s"], key="w_refresh")
+else:
+    sens, strict, smart, atr_mult, closed, custom_tf, balance, risk, refresh = (P.get(k, d) for k, d in ADV.items())
+P.update(dict(sens=sens, strict=strict, smart=smart, atr_mult=atr_mult, closed=closed, custom_tf=custom_tf,
+              balance=balance, risk=risk, refresh=refresh))
+THR = {"Conservative": 6.5, "Balanced": 5.5, "Aggressive": 4.5}[sens]
 if refresh != "Off":
     try:
         from streamlit_autorefresh import st_autorefresh
         st_autorefresh(interval=int(refresh[:-1]) * 1000, key="auto")
     except ImportError:
         pass
+st.sidebar.caption(t("🌓 Light / Dark: tap ⋮ (top-right) → Settings → Theme",
+                     "🌓 Light / Dark: උඩ දකුණේ ⋮ → Settings → Theme"))
 
-st.markdown("""<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
-.stApp{background:#0b0e11;font-family:'Inter',system-ui,sans-serif}
-footer{visibility:hidden}
-[data-testid=stSidebar]{background:#11151a;border-right:1px solid #2b3139}
-.block-container{padding-top:2.2rem;max-width:1250px}
-.hero{padding:22px 26px;border-radius:18px;margin-bottom:12px;border:1px solid #2b3139;
- background:radial-gradient(circle at 85% 0%,#4c1d95 0%,transparent 55%),linear-gradient(120deg,#12161c,#1b1740);
- box-shadow:0 8px 30px rgba(124,58,237,.18)}
-.hero h1{margin:0;font-size:42px;font-weight:800;letter-spacing:.5px;
- background:linear-gradient(90deg,#fff,#c4b5fd,#67e8f9);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-.hero p{margin:4px 0 0;color:#9ca3af;font-size:15px}
-.ticker{display:flex;gap:10px;overflow-x:auto;white-space:nowrap;padding:2px 0 12px;scrollbar-width:thin}
-.chip{background:#161a1e;border:1px solid #2b3139;border-radius:999px;padding:6px 14px;font-size:13px;color:#eaecef}
-.chip b{margin-right:6px}.chip i{font-style:normal;font-weight:700;margin-left:6px}
-.up{color:#0ecb81}.dn{color:#f6465d}
-[data-testid=stMetric]{background:#161a1e;border:1px solid #2b3139;border-radius:12px;padding:12px 14px}
-[data-testid=stMetricLabel]{color:#848e9c}
-[data-testid=stExpander]{background:#161a1e;border:1px solid #2b3139;border-radius:12px}
-[data-testid=stDataFrame]{border:1px solid #2b3139;border-radius:12px;overflow:hidden}
-button[data-baseweb=tab]{font-weight:600;color:#848e9c}
-button[data-baseweb=tab][aria-selected=true]{color:#fff}
-div[data-baseweb=tab-highlight]{background:linear-gradient(90deg,#7c3aed,#67e8f9);height:3px}
-.stButton>button{border-radius:10px;border:1px solid #2b3139}
-.stButton>button[kind=primary]{background:linear-gradient(90deg,#7c3aed,#4f46e5);border:0;color:#fff;font-weight:700}
-.mobile-hint{display:none}
-@media (max-width:640px){
- .block-container{padding:3.2rem .7rem 3rem !important}
- .hero{padding:14px 16px;border-radius:14px;margin-bottom:10px}
- .hero h1{font-size:28px}.hero p{font-size:13px}
- button[data-baseweb=tab]{padding:8px 10px;font-size:14px}
- [data-testid=stMetricValue]{font-size:1.25rem}[data-testid=stMetricLabel]{font-size:.8rem}
- .stButton>button,.stDownloadButton>button{width:100%;min-height:46px}
- h2,h3{font-size:1.15rem !important}
- .mobile-hint{display:block;background:#1b1740;color:#e0e7ff;padding:8px 12px;border-radius:10px;font-size:13px;margin-bottom:10px}
-}
-</style>""", unsafe_allow_html=True)
-st.markdown(f"<div class='hero'><h1>⚡ {APP_NAME}</h1><p>{TAGLINE} · Smart crypto futures signals</p></div>", unsafe_allow_html=True)
 _chips = ""
 for _, _r in mk[mk.price > 0].head(8).iterrows():
     _chips += (f"<span class='chip'><b>{_r.base}</b>{fmt(_r.price)}"
                f"<i class='{'up' if _r.chg >= 0 else 'dn'}'>{_r.chg:+.2f}%</i></span>")
 if _chips:
-    st.markdown(f"<div class='ticker'>{_chips}</div>", unsafe_allow_html=True)
-st.markdown("<div class='mobile-hint'>" + t("📱 Tap the ☰ / arrow at the top-left to choose exchange, coin and settings.",
-            "📱 exchange, coin සහ සැකසුම් තෝරන්න උඩ වම් කෙළවරේ ☰ / ඊතලය ඔබන්න.") + "</div>", unsafe_allow_html=True)
-tf_default = qp.get("tf") if qp.get("tf") in TF else "5m"
-if hasattr(st, "segmented_control"):
-    tf_label = st.segmented_control(t("Timeframe", "කාල රාමුව"), list(TF), default=tf_default, key="tf_sel") or tf_default
+    tick.markdown(f"<div class='ticker'>{_chips}</div>", unsafe_allow_html=True)
+
+tf_default = P.get("tf") if P.get("tf") in TF else (qp.get("tf") if qp.get("tf") in TF else "5m")
+if page in ("signal", "scan"):
+    if hasattr(st, "segmented_control"):
+        tf_label = st.segmented_control(t("Timeframe", "කාල රාමුව"), list(TF), default=tf_default, key="tf_sel") or tf_default
+    else:
+        tf_label = st.selectbox(t("Timeframe", "කාල රාමුව"), list(TF), index=list(TF).index(tf_default))
 else:
-    tf_label = st.selectbox(t("Timeframe", "කාල රාමුව"), list(TF), index=list(TF).index(tf_default))
+    tf_label = tf_default
+P["tf"] = tf_label
 tfm = int(custom_tf) if custom_tf > 0 else TF[tf_label]
 if custom_tf > 0:
     tf_label = f"{custom_tf}m"
@@ -465,6 +445,11 @@ except Exception:
 
 
 # ---------------- Tabs ----------------
+def tdf(df):
+    """Show a table with translated column names."""
+    return df.rename(columns={c: t(str(c)) for c in df.columns})
+
+
 def tab_signal():
     try:
         used, s, raw = load(ex, coin, tfm)
@@ -498,29 +483,40 @@ def tab_signal():
     oadj = 0.0 if ob is None else (0.5 if ob > 0.2 else (-0.5 if ob < -0.2 else 0.0))
     total = base + hb[0] + 0.5 * hb[1] + fadj + oadj
     cand = "LONG" if total >= THR else ("SHORT" if total <= -THR else "WAIT")
-    res = backtest(d, THR, atr_mult)
+    bt = backtest_ix(d, THR, atr_mult)
+    res = [r_ for _, r_ in bt]
     n = len(res)
     wr = sum(1 for x in res if x > 0) / n if n else 0
     exp = float(np.mean(res)) if n else 0.0
-    edge = None if n < 8 else exp > 0
+    oos = [r_ for i_, r_ in bt if i_ >= int(len(d) * 0.6)]  # most recent 40% = out-of-sample check
+    exp_o = float(np.mean(oos)) if oos else 0.0
+    edge = None if n < 8 else (exp > 0 and (len(oos) < 4 or exp_o > 0))
 
     side, grade, fails, chk = cand, "", [], []
     if cand != "WAIT":
         sg = 1 if cand == "LONG" else -1
         ext = (price - l.ema21) / l.atr * sg
-        chk = [
-            (t("Higher timeframe 1 agrees", "ඉහළ කාල රාමුව 1 එකඟයි"), None if hb[0] == 0 else hb[0] * sg > 0),
-            (t("Higher timeframe 2 agrees", "ඉහළ කාල රාමුව 2 එකඟයි"), None if hb[1] == 0 else hb[1] * sg > 0),
-            (t("Funding not crowded against you", "Funding ඔබට විරුද්ධ නැත"), None if fr is None else not ((sg > 0 and fr > 0.0005) or (sg < 0 and fr < -0.0005))),
-            (t("Order book supports", "Order book සහාය දෙයි"), None if ob is None or abs(ob) <= 0.15 else ob * sg > 0),
-            (t("Price not overextended", "මිල අධික ලෙස දුර ගොස් නැත"), bool(ext < 2.5)),
-            (t("Trending market (ADX 22+)", "Trend එකක් ඇත (ADX 22+)"), True if l.adx >= 22 else None),
-            (t("Backtest shows an edge on this pair", "මෙම pair එකේ backtest ජයග්‍රාහී"), edge),
+        flow = (1 if l.obv > l.obv_ema else -1) + (1 if l.mfi > 50 else -1)
+        opp_div = bool(l.bear_div) if sg > 0 else bool(l.bull_div)
+        # (label, value, hard) - a hard check that FAILS blocks the signal in strict mode
+        chk3 = [
+            (t("Higher timeframe 1 agrees", "ඉහළ කාල රාමුව 1 එකඟයි"), None if hb[0] == 0 else hb[0] * sg > 0, True),
+            (t("Higher timeframe 2 agrees", "ඉහළ කාල රාමුව 2 එකඟයි"), None if hb[1] == 0 else hb[1] * sg > 0, False),
+            (t("Funding not crowded against you", "Funding ඔබට විරුද්ධ නැත"), None if fr is None else not ((sg > 0 and fr > 0.0005) or (sg < 0 and fr < -0.0005)), True),
+            (t("Order book supports", "Order book සහාය දෙයි"), None if ob is None or abs(ob) <= 0.15 else ob * sg > 0, False),
+            (t("Price not overextended", "මිල අධික ලෙස දුර ගොස් නැත"), bool(ext < 2.5), True),
+            (t("Trending market (ADX 22+)", "Trend එකක් ඇත (ADX 22+)"), True if l.adx >= 22 else None, False),
+            (t("Supertrend agrees", "Supertrend එකඟයි"), l.st_dir * sg > 0, False),
+            (t("Volume flow confirms (OBV + MFI)", "Volume flow තහවුරු කරයි (OBV + MFI)"), None if flow == 0 else flow * sg > 0, False),
+            (t("No opposing RSI divergence", "විරුද්ධ RSI divergence නැත"), not opp_div, True),
+            (t("Market is active (not dead / squeezed)", "වෙළඳපොළ සක්‍රීයයි (මළ / squeeze නොවේ)"), not (l.atr_rank < 0.10), False),
+            (t("Backtest shows an edge on this pair", "මෙම pair එකේ backtest ජයග්‍රාහී"), edge, True),
         ]
-        fails = [a for a, v in chk if v is False]
-        oks = sum(1 for _, v in chk if v is True)
-        grade = "A+" if oks >= 6 else "A" if oks == 5 else "B" if oks == 4 else "C"
-        if strict and (fails or oks < 3):
+        chk = [(a_, v_) for a_, v_, _ in chk3]
+        fails = [a_ for a_, v_, h_ in chk3 if v_ is False and h_]
+        oks = sum(1 for _, v_, _h in chk3 if v_ is True)
+        grade = "A+" if oks >= 9 else "A" if oks >= 7 else "B" if oks >= 5 else "C"
+        if strict and (fails or oks < 5):
             side = "WAIT"
     strength = min(100, abs(total) / 9 * 100)
     head = f"{coin}/USDT · {tf_label} · {used} · {t('strength', 'ශක්තිය')} {strength:.0f}%"
@@ -548,7 +544,7 @@ def tab_signal():
         plan = {"sl": price - sg * r, "tp1": price + sg * r, "tp2": price + sg * 2 * r, "tp3": price + sg * 3 * r}
         st.subheader(t("Trade plan", "ට්‍රේඩ් සැලැස්ම"))
         st.table(pd.DataFrame({
-            t("Level", "මට්ටම"): [t("Entry", "ඇතුල් වන මිල"), "Stop-loss", "TP1 (1R)", "TP2 (2R)", "TP3 (3R)"],
+            t("Level", "මට්ටම"): [t("Entry", "ඇතුල් වන මිල"), t("Stop-loss", "Stop-loss"), "TP1 (1R)", "TP2 (2R)", "TP3 (3R)"],
             t("Price", "මිල"): [fmt(price), fmt(plan["sl"]), fmt(plan["tp1"]), fmt(plan["tp2"]), fmt(plan["tp3"])]}))
         k1, k2, k3 = st.columns(3)
         k1.metric(t("Stop distance", "Stop දුර"), f"{sl_pct * 100:.2f}%")
@@ -578,6 +574,8 @@ def tab_signal():
                                  decreasing_line_color="#f6465d", decreasing_fillcolor="#f6465d"), row=1, col=1)
     for nn, col in [(9, "#f5a623"), (21, "#4a90e2"), (50, "#9b59b6"), (200, "#7f8c8d")]:
         fig.add_trace(go.Scatter(x=dd.time, y=dd[f"ema{nn}"], name=f"EMA{nn}", line=dict(width=1, color=col)), row=1, col=1)
+    fig.add_trace(go.Scatter(x=dd.time, y=dd.st_line.where(dd.st_dir > 0), name="Supertrend ↑", line=dict(width=1.6, color="#0ecb81")), row=1, col=1)
+    fig.add_trace(go.Scatter(x=dd.time, y=dd.st_line.where(dd.st_dir < 0), name="Supertrend ↓", line=dict(width=1.6, color="#f6465d")), row=1, col=1)
     fig.add_trace(go.Scatter(x=dd.time[upm[dd.index]], y=dd.low[upm[dd.index]] * 0.999, mode="markers", name="Long",
                              marker=dict(symbol="triangle-up", size=11, color="#2ecc71")), row=1, col=1)
     fig.add_trace(go.Scatter(x=dd.time[dnm[dd.index]], y=dd.high[dnm[dd.index]] * 1.001, mode="markers", name="Short",
@@ -589,11 +587,11 @@ def tab_signal():
     fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
     fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
     fig.add_trace(go.Bar(x=dd.time, y=dd.macd_h, name="MACD hist", marker_color=["#0ecb81" if v >= 0 else "#f6465d" for v in dd.macd_h]), row=3, col=1)
-    fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
                       height=620, xaxis_rangeslider_visible=False, margin=dict(l=5, r=5, t=5, b=5),
                       legend=dict(orientation='h', y=1.02, x=0))
-    fig.update_xaxes(gridcolor="#1e2329")
-    fig.update_yaxes(gridcolor="#1e2329")
+    fig.update_xaxes(gridcolor="rgba(128,128,128,.15)")
+    fig.update_yaxes(gridcolor="rgba(128,128,128,.15)")
     st.plotly_chart(fig, use_container_width=True)
 
     st.subheader(t("Reality check: this strategy on this pair's history", "Reality check: මෙම pair එකේ ඉතිහාසයේ strategy එක"))
@@ -603,14 +601,20 @@ def tab_signal():
         b2.metric(t("Win rate", "ජය අනුපාතය"), f"{wr * 100:.0f}%")
         b3.metric(t("Avg result", "සාමාන්‍ය ප්‍රතිඵලය"), f"{exp:+.2f} R")
         b4.metric(t("Total", "එකතුව"), f"{sum(res):+.1f} R")
-        st.caption(t("TP at 2R, fixed-ATR stop, no fees/slippage, base score only (no higher-TF/funding/order-book filters). Break-even win rate is ~33%. In-sample test: past results never guarantee future results.",
-                     "TP 2R, ස්ථාවර ATR stop, fees/slippage නැත, base score පමණි. Break-even ජය අනුපාතය ~33%. අතීත ප්‍රතිඵල අනාගතය තහවුරු නොකරයි."))
+        if len(oos) >= 3:
+            o1, o2 = st.columns(2)
+            o1.metric(t("Recent 40% only: win rate", "අලුත්ම 40% පමණක්: ජය අනුපාතය"), f"{sum(1 for x in oos if x > 0) / len(oos) * 100:.0f}%")
+            o2.metric(t("Recent 40% only: avg result", "අලුත්ම 40% පමණක්: සාමාන්‍ය ප්‍රතිඵලය"), f"{exp_o:+.2f} R")
+        st.caption(t("TP at 2R, fixed-ATR stop, ~0.1% fees+slippage already deducted, base score only (no higher-TF/funding/order-book filters). Break-even win rate is about 35%. If the recent 40% is worse than the total, the edge is fading. Past results never guarantee the future.",
+                     "TP 2R, ස්ථාවර ATR stop, fees+slippage (~0.1%) අඩු කර ඇත, base score පමණි. Break-even ජය අනුපාතය ~35%. අලුත්ම 40% මුළු එකට වඩා නරක නම් edge එක අඩු වෙමින් පවතී. අතීත ප්‍රතිඵල අනාගතය තහවුරු නොකරයි."))
     else:
         st.info(t("Too few historical signals to judge this pair/timeframe.", "මෙම pair/කාල රාමුව විනිශ්චය කිරීමට ඉතිහාසයේ signals ප්‍රමාණවත් නැත."))
 
 
 def pick_coin(c):
     st.session_state["coin_sel"] = c
+    st.session_state["nav"] = "signal"
+    st.session_state.setdefault("_P", {})["coin"] = c
 
 
 def scan_one(args):
@@ -623,7 +627,7 @@ def scan_one(args):
             return None
         sc, l = float(score_df(d).iloc[-1]), d.iloc[-1]
         return {"Coin": base, "Signal": "LONG" if sc >= THR else ("SHORT" if sc <= -THR else "WAIT"),
-                "Strength %": round(abs(sc) / 7 * 100), "Price": fmt(l.close), "24h %": round(chg, 2),
+                "Strength %": round(min(100, abs(sc) / 9 * 100)), "Price": fmt(l.close), "24h %": round(chg, 2),
                 "Vol (M USDT)": round(vol / 1e6, 1), "RSI": round(float(l.rsi), 1), "ADX": round(float(l.adx), 1)}
     except Exception:
         return None
@@ -648,8 +652,8 @@ def tab_scan():
         st.session_state["scan_df"] = df
     df = st.session_state.get("scan_df")
     if df is not None:
-        st.dataframe(df, use_container_width=True, hide_index=True)
-        st.download_button("⬇️ CSV", df.to_csv(index=False), "signals.csv", "text/csv")
+        st.dataframe(tdf(df), use_container_width=True, hide_index=True)
+        st.download_button(t("⬇️ Download CSV", "⬇️ CSV බාගන්න"), df.to_csv(index=False), "signals.csv", "text/csv")
         cols = st.columns(6)
         for i, c in enumerate(df.Coin.head(6)):
             cols[i].button(f"{c}", key=f"sc_{c}", on_click=pick_coin, args=(c,), help=t("Open full analysis", "සම්පූර්ණ විශ්ලේෂණය බලන්න"))
@@ -666,7 +670,7 @@ def tab_new():
         st.info(t("No new listings in this period.", "මෙම කාලයේ අලුත් listings නැත."))
         return
     show = m[["base", "Age (days)", "price", "chg", "vol"]].rename(columns={"base": "Coin", "price": "Price", "chg": "24h %", "vol": "24h Volume"})
-    st.dataframe(show, use_container_width=True, hide_index=True)
+    st.dataframe(tdf(show), use_container_width=True, hide_index=True)
     cols = st.columns(6)
     for i, c in enumerate(m.base.head(6)):
         cols[i].button(f"{c} 🆕", key=f"nw_{c}", on_click=pick_coin, args=(c,))
@@ -737,11 +741,8 @@ def tab_guide():
 **අවදානම් නීති:** stop-loss හැමවිටම භාවිතා කරන්න, එක ට්‍රේඩ් එකකට 1% හෝ අඩුවෙන් අවදානම් වන්න, උපරිම leverage කිසිවිටක පාවිච්චි කරන්න එපා, ලොකු news වෙලාවල ට්‍රේඩ් නොකරන්න."""))
 
 
-tabs = st.tabs([t("⚡ Signal", "⚡ Signal"), t("🔎 Scanner", "🔎 ස්කෑනර්"), t("🆕 New listings", "🆕 අලුත් coins"),
-                t("📊 Fundamentals", "📊 මූලික දත්ත"), t("❓ Guide", "❓ මාර්ගෝපදේශය"), t("💼 Portfolio", "💼 Portfolio")])
-for tb, fn in zip(tabs, (tab_signal, tab_scan, tab_new, tab_fund, tab_guide, lambda: accounts.portfolio_tab(t, mk, fmt))):
-    with tb:
-        fn()
+{"signal": tab_signal, "scan": tab_scan, "new": tab_new, "fund": tab_fund, "guide": tab_guide,
+ "port": lambda: accounts.portfolio_tab(t, mk, fmt)}[page]()
 
 st.caption("⚠️ " + t("Educational tool, not financial advice. Signals are probabilities, never guarantees. Leveraged futures can wipe out your account - always use a stop-loss.",
                       "අධ්‍යාපනික මෙවලමකි, මූල්‍ය උපදෙස් නොවේ. Signals සම්භාවිතාවන් මිස සහතික නොවේ. Leverage සහිත futures වලින් ඔබේ ගිණුම සම්පූර්ණයෙන් අහිමි විය හැක - හැමවිටම stop-loss භාවිතා කරන්න."))
