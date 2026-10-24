@@ -10,6 +10,9 @@ import streamlit as st
 import accounts
 import i18n
 import brand
+import theme
+import ui
+import funda
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -27,6 +30,12 @@ def end_splash():
 
 st.sidebar.markdown(brand.sidebar_logo(APP_NAME), unsafe_allow_html=True)
 t = i18n.setup()
+if "w_theme" not in st.session_state:
+    _qt = st.query_params.get("theme")
+    st.session_state["w_theme"] = _qt if _qt in theme.PALETTES else "Dark"
+with st.sidebar.expander(t("🎨 Appearance", "🎨 පෙනුම")):
+    theme_name = st.selectbox(t("Colour theme", "වර්ණ තේමාව"), list(theme.PALETTES), key="w_theme")
+    accent = st.color_picker(t("Accent colour", "Accent වර්ණය"), theme.PALETTES[theme_name]["accent"], key=f"w_accent_{theme_name}")
 
 
 TF = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "2h": 120,
@@ -327,7 +336,7 @@ def card(side, grade, head, sub):
 
 
 # ---------------- Header & navigation ----------------
-st.markdown(brand.css(), unsafe_allow_html=True)
+st.markdown(theme.css(theme_name, accent) + ui.css() + brand.css(), unsafe_allow_html=True)
 _nl = len(i18n.LANGS)
 st.markdown(brand.hero_html(APP_NAME, TAGLINE, [
     t("⚡ Live signals", "⚡ සජීවී signals"), t("🔎 Market scanner", "🔎 වෙළඳපොළ ස්කෑනර්"),
@@ -435,8 +444,9 @@ _chips = ""
 for _, _r in mk[mk.price > 0].head(8).iterrows():
     _chips += (f"<span class='chip'><b>{_r.base}</b>{fmt(_r.price)}"
                f"<i class='{'up' if _r.chg >= 0 else 'dn'}'>{_r.chg:+.2f}%</i></span>")
-if _chips:
-    tick.markdown(f"<div class='ticker'>{_chips}</div>", unsafe_allow_html=True)
+_gb = funda.global_bar(t)
+if _chips or _gb:
+    tick.markdown(_gb + f"<div class='ticker'>{_chips}</div>", unsafe_allow_html=True)
 
 tf_default = P.get("tf") if P.get("tf") in TF else (qp.get("tf") if qp.get("tf") in TF else "5m")
 if page in ("signal", "scan"):
@@ -450,8 +460,16 @@ P["tf"] = tf_label
 tfm = int(custom_tf) if custom_tf > 0 else TF[tf_label]
 if custom_tf > 0:
     tf_label = f"{custom_tf}m"
+if page in ("signal", "scan"):
+    _ico, _nm, _hold, _noise, _tip = (
+        ("⚡", "Scalping", "minutes to 1 hour", "High", "Tight stops, small size, watch the fees") if tfm <= 5 else
+        ("🕒", "Intraday", "1 to 12 hours", "Medium", "A good balance of speed and reliability") if tfm <= 60 else
+        ("📈", "Swing", "1 to 5 days", "Low to medium", "Wider stops, fewer but cleaner signals") if tfm <= 360 else
+        ("🏔️", "Position", "days to weeks", "Low", "Slow, big-picture trades; keep leverage small"))
+    st.markdown(f"<div class='tfinfo'><b>{_ico} {ui.esc(t(_nm))}</b><span>⏱ {ui.esc(t('Typical hold'))}: {ui.esc(t(_hold))}</span>"
+                f"<span>〰 {ui.esc(t('Noise'))}: {ui.esc(t(_noise))}</span><span>💡 {ui.esc(t(_tip))}</span></div>", unsafe_allow_html=True)
 try:
-    st.query_params.update({"ex": ex_pref, "coin": coin, "tf": tf_label if tf_label in TF else "5m"})
+    st.query_params.update({"ex": ex_pref, "coin": coin, "tf": tf_label if tf_label in TF else "5m", "theme": theme_name})
 except Exception:
     pass
 
@@ -645,6 +663,17 @@ def scan_one(args):
         return None
 
 
+def scan_table(df):
+    rows = []
+    for i, (_, r) in enumerate(df.iterrows(), 1):
+        cls = {"LONG": "long", "SHORT": "short"}.get(r.Signal, "wait")
+        bar = "g" if r.Signal == "LONG" else "r" if r.Signal == "SHORT" else ""
+        rows.append([i, f"<span class='coin'>{ui.esc(r.Coin)}</span>", f"<span class='pill {cls}'>{r.Signal}</span>",
+                     f"<div class='strength'>{ui.progress(r['Strength %'], bar)}<span>{r['Strength %']}%</span></div>",
+                     ui.esc(r.Price), ui.pill(r["24h %"]), f"{r['Vol (M USDT)']:,.1f}M", f"{r.RSI:.0f}", f"{r.ADX:.0f}"])
+    return ui.table(["#", t("Coin"), t("Signal"), t("Strength"), t("Price"), "24h %", t("Volume"), "RSI", "ADX"], rows, right=(4, 5, 6, 7, 8))
+
+
 def tab_scan():
     st.write(t(f"Scans the most traded USDT pairs on **{tf_label}** ({len(coins)} pairs listed on {ex}).",
                f"{ex} හි pairs {len(coins)} අතරින් වැඩියෙන්ම trade වන ඒවා **{tf_label}** මත ස්කෑන් කරයි."))
@@ -664,7 +693,7 @@ def tab_scan():
         st.session_state["scan_df"] = df
     df = st.session_state.get("scan_df")
     if df is not None:
-        st.dataframe(tdf(df), use_container_width=True, hide_index=True)
+        st.markdown(scan_table(df), unsafe_allow_html=True)
         st.download_button(t("⬇️ Download CSV", "⬇️ CSV බාගන්න"), df.to_csv(index=False), "signals.csv", "text/csv")
         cols = st.columns(6)
         for i, c in enumerate(df.Coin.head(6)):
@@ -682,7 +711,9 @@ def tab_new():
         st.info(t("No new listings in this period.", "මෙම කාලයේ අලුත් listings නැත."))
         return
     show = m[["base", "Age (days)", "price", "chg", "vol"]].rename(columns={"base": "Coin", "price": "Price", "chg": "24h %", "vol": "24h Volume"})
-    st.dataframe(tdf(show), use_container_width=True, hide_index=True)
+    rows = [[i, f"<span class='coin'>{ui.esc(r['Coin'])}</span> 🆕", f"{r['Age (days)']}", ui.esc(fmt(r["Price"])), ui.pill(r["24h %"]),
+             ui.compact(r["24h Volume"])] for i, (_, r) in enumerate(show.iterrows(), 1)]
+    st.markdown(ui.table(["#", t("Coin"), t("Age (days)"), t("Price"), "24h %", t("24h volume")], rows, right=(2, 3, 4, 5)), unsafe_allow_html=True)
     cols = st.columns(6)
     for i, c in enumerate(m.base.head(6)):
         cols[i].button(f"{c} 🆕", key=f"nw_{c}", on_click=pick_coin, args=(c,))
@@ -697,38 +728,17 @@ def cg(base):
     if not cid:
         r = J("https://api.coingecko.com/api/v3/search", query=b)["coins"]
         cid = next(x["id"] for x in r if x["symbol"].upper() == b.upper())
-    return J(f"https://api.coingecko.com/api/v3/coins/{cid}", localization="false", tickers="false", community_data="false", developer_data="true")
+    return J(f"https://api.coingecko.com/api/v3/coins/{cid}", localization="false", tickers="false", community_data="true", developer_data="true", sparkline="true")
 
 
 def tab_fund():
     try:
         j = cg(coin)
-        md = j["market_data"]
+        j["market_data"]
     except Exception:
         st.warning(t("Fundamental data not available (very new coin or CoinGecko limit).", "මූලික දත්ත නැත (ඉතා අලුත් coin එකක් හෝ CoinGecko සීමාව)."))
         return
-    mc, vol = md["market_cap"].get("usd") or 0, md["total_volume"].get("usd") or 0
-    a = st.columns(4)
-    a[0].metric("Rank", f"#{j.get('market_cap_rank')}")
-    a[1].metric("Market cap", f"${mc:,.0f}")
-    a[2].metric(t("24h volume", "24h volume"), f"${vol:,.0f}")
-    a[3].metric(t("Circulating", "සංසරණ supply"), f"{(md.get('circulating_supply') or 0):,.0f}")
-    b = st.columns(4)
-    b[0].metric("ATH", f"${md['ath']['usd']:,.4f}")
-    b[1].metric(t("From ATH", "ATH සිට"), f"{md['ath_change_percentage']['usd']:.1f}%")
-    b[2].metric("30d", f"{(md.get('price_change_percentage_30d') or 0):.1f}%")
-    b[3].metric("1y", f"{(md.get('price_change_percentage_1y') or 0):.1f}%")
-    if mc:
-        r = vol / mc
-        st.write(("🟢" if r > 0.1 else "🔴" if r < 0.02 else "🟡") + t(f" Volume/market cap {r:.1%} (liquidity)", f" Volume/market cap {r:.1%} (නගුලතාව)"))
-    if md.get("max_supply") and md.get("circulating_supply"):
-        p = md["circulating_supply"] / md["max_supply"]
-        st.write(("🟢" if p > 0.8 else "🟡") + t(f" {p:.0%} of max supply issued", f" max supply හි {p:.0%} නිකුත් වී ඇත"))
-    else:
-        st.write("🟡 " + t("No supply cap (inflation risk)", "supply සීමාවක් නැත (උද්ධමන අවදානම)"))
-    cm = (j.get("developer_data") or {}).get("commit_count_4_weeks")
-    if cm is not None:
-        st.write(("🟢" if cm > 50 else "🔴" if cm == 0 else "🟡") + t(f" {cm} developer commits in 4 weeks", f" සති 4ක developer commits {cm}"))
+    funda.render(j, t)
 
 
 def tab_guide():
