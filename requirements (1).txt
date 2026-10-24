@@ -1,0 +1,8 @@
+streamlit>=1.40
+requests
+numpy
+pandas
+plotly
+supabase
+deep-translator
+streamlit-autorefresh
