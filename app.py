@@ -118,6 +118,19 @@ def market(ex):
     return m.sort_values("vol", ascending=False).reset_index(drop=True)
 
 
+@cached(600)
+def reachable():
+    """Exchanges this server can actually reach (some block cloud servers by region)."""
+    def ok(e):
+        try:
+            return len(market(e)) > 0
+        except Exception:
+            return False
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        res = list(pool.map(ok, list(EX)))
+    return [e for e, r in zip(EX, res) if r]
+
+
 def market_any(pref):
     for e in [pref] + [x for x in EX if x != pref]:
         try:
@@ -329,14 +342,17 @@ def reasons(l):
 
 
 def card(side, grade, head, sub):
-    col = {"LONG": "#16a34a", "SHORT": "#dc2626", "WAIT": "#b45309"}[side]
+    bg = {"LONG": "linear-gradient(135deg,#064e3b,#0ecb81)", "SHORT": "linear-gradient(135deg,#7f1d1d,#f6465d)",
+          "WAIT": "linear-gradient(135deg,#3f3f46,#a16207)"}[side]
+    glow = {"LONG": "rgba(14,203,129,.35)", "SHORT": "rgba(246,70,93,.35)", "WAIT": "rgba(161,98,7,.25)"}[side]
     ico = {"LONG": "🟢", "SHORT": "🔴", "WAIT": "🟡"}[side]
     g = f" · {grade}" if grade else ""
     st.markdown(
-        f"<div style='background:{col};color:#fff;padding:clamp(12px,3.5vw,18px) clamp(14px,4vw,22px);border-radius:16px'>"
-        f"<div style='font-size:clamp(26px,8vw,36px);font-weight:800;line-height:1.1'>{ico} {side}{g}</div>"
-        f"<div style='font-size:15px;margin-top:6px;opacity:.95'>{head}</div>"
-        f"<div style='font-size:14px;margin-top:6px;opacity:.9'>{sub}</div></div>", unsafe_allow_html=True)
+        f"<div style='background:{bg};color:#fff;padding:clamp(14px,3.5vw,20px) clamp(14px,4vw,24px);"
+        f"border-radius:18px;box-shadow:0 8px 28px {glow};border:1px solid rgba(255,255,255,.12)'>"
+        f"<div style='font-size:clamp(26px,8vw,38px);font-weight:800;line-height:1.1'>{ico} {side}{g}</div>"
+        f"<div style='font-size:15px;margin-top:8px;opacity:.95'>{head}</div>"
+        f"<div style='font-size:14px;margin-top:6px;opacity:.85'>{sub}</div></div>", unsafe_allow_html=True)
 
 
 # ---------------- Sidebar ----------------
@@ -344,15 +360,23 @@ qp = st.query_params
 st.sidebar.title(f"⚡ {APP_NAME}")
 st.sidebar.caption("by Software owners")
 accounts.sidebar_box(t)
-ex_pref = st.sidebar.selectbox(t("Exchange (futures)", "එක්ස්චේන්ජ් එක (futures)"), list(EX),
-                               index=list(EX).index(qp["ex"]) if qp.get("ex") in EX else 0)
+OK = reachable()
+if not OK:
+    with _L:
+        _C.pop(("reachable",), None)  # don't remember a total failure
+    st.error(t("No exchange could be reached from this server. Please try again in a minute.",
+               "මෙම server එකෙන් කිසිදු exchange එකකට සම්බන්ධ විය නොහැක. විනාඩියකින් නැවත උත්සාහ කරන්න."))
+    st.stop()
+_want = qp.get("ex") if qp.get("ex") in OK else OK[0]
+ex_pref = st.sidebar.selectbox(t("Exchange (futures)", "එක්ස්චේන්ජ් එක (futures)"), OK, index=OK.index(_want))
 try:
     ex, mk = market_any(ex_pref)
 except Exception as e:
-    st.error(t("No exchange could be reached from this server.", "මෙම server එකෙන් කිසිදු exchange එකකට සම්බන්ධ විය නොහැක.") + f" ({e})")
+    st.error(t("Exchange data could not be loaded.", "Exchange දත්ත load කළ නොහැක.") + f" ({e})")
     st.stop()
-if ex != ex_pref:
-    st.sidebar.info(t(f"{ex_pref} is blocked here, using {ex}.", f"{ex_pref} මෙතන block වී ඇත, {ex} භාවිතා කරයි."))
+if len(OK) < len(EX):
+    st.sidebar.caption(t("ℹ️ Only exchanges available from this server are listed.",
+                         "ℹ️ මෙම server එකෙන් සම්බන්ධ විය හැකි exchanges පමණක් පෙන්වයි."))
 coins = list(dict.fromkeys(mk.base))
 NEW = set(mk[(mk.listed > 0) & ((time.time() * 1000 - mk.listed) < 14 * 86400000)].base)
 cur = st.session_state.get("coin_sel", qp.get("coin", "BTC"))
@@ -380,30 +404,50 @@ if refresh != "Off":
     except ImportError:
         pass
 
-st.markdown(
-    "<style>"
-    ".hero{padding:22px 26px;border-radius:18px;margin-bottom:14px;"
-    "background:linear-gradient(120deg,#0f172a 0%,#312e81 55%,#7c3aed 100%);color:#fff}"
-    ".hero h1{margin:0;font-size:42px;font-weight:900;letter-spacing:1px;"
-    "background:linear-gradient(90deg,#fff,#a5b4fc,#67e8f9);-webkit-background-clip:text;-webkit-text-fill-color:transparent}"
-    ".hero p{margin:4px 0 0;opacity:.85;font-size:16px}"
-    "button[data-baseweb=tab]{font-weight:600}"
-    ".mobile-hint{display:none}"
-    "@media (max-width:640px){"
-    ".block-container{padding:3.2rem .7rem 3rem !important}"
-    ".hero{padding:14px 16px;border-radius:14px;margin-bottom:10px}"
-    ".hero h1{font-size:28px}.hero p{font-size:13px}"
-    "button[data-baseweb=tab]{padding:8px 10px;font-size:14px}"
-    "[data-testid=stMetricValue]{font-size:1.25rem}"
-    "[data-testid=stMetricLabel]{font-size:.8rem}"
-    ".stButton>button,.stDownloadButton>button{width:100%;min-height:46px}"
-    "h2,h3{font-size:1.15rem !important}"
-    ".mobile-hint{display:block;background:#312e81;color:#e0e7ff;padding:8px 12px;border-radius:10px;"
-    "font-size:13px;margin-bottom:10px}"
-    "}"
-    "</style>"
-    f"<div class='hero'><h1>⚡ {APP_NAME}</h1><p>{TAGLINE} · Smart crypto futures signals</p></div>",
-    unsafe_allow_html=True)
+st.markdown("""<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
+.stApp{background:#0b0e11;font-family:'Inter',system-ui,sans-serif}
+footer{visibility:hidden}
+[data-testid=stSidebar]{background:#11151a;border-right:1px solid #2b3139}
+.block-container{padding-top:2.2rem;max-width:1250px}
+.hero{padding:22px 26px;border-radius:18px;margin-bottom:12px;border:1px solid #2b3139;
+ background:radial-gradient(circle at 85% 0%,#4c1d95 0%,transparent 55%),linear-gradient(120deg,#12161c,#1b1740);
+ box-shadow:0 8px 30px rgba(124,58,237,.18)}
+.hero h1{margin:0;font-size:42px;font-weight:800;letter-spacing:.5px;
+ background:linear-gradient(90deg,#fff,#c4b5fd,#67e8f9);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.hero p{margin:4px 0 0;color:#9ca3af;font-size:15px}
+.ticker{display:flex;gap:10px;overflow-x:auto;white-space:nowrap;padding:2px 0 12px;scrollbar-width:thin}
+.chip{background:#161a1e;border:1px solid #2b3139;border-radius:999px;padding:6px 14px;font-size:13px;color:#eaecef}
+.chip b{margin-right:6px}.chip i{font-style:normal;font-weight:700;margin-left:6px}
+.up{color:#0ecb81}.dn{color:#f6465d}
+[data-testid=stMetric]{background:#161a1e;border:1px solid #2b3139;border-radius:12px;padding:12px 14px}
+[data-testid=stMetricLabel]{color:#848e9c}
+[data-testid=stExpander]{background:#161a1e;border:1px solid #2b3139;border-radius:12px}
+[data-testid=stDataFrame]{border:1px solid #2b3139;border-radius:12px;overflow:hidden}
+button[data-baseweb=tab]{font-weight:600;color:#848e9c}
+button[data-baseweb=tab][aria-selected=true]{color:#fff}
+div[data-baseweb=tab-highlight]{background:linear-gradient(90deg,#7c3aed,#67e8f9);height:3px}
+.stButton>button{border-radius:10px;border:1px solid #2b3139}
+.stButton>button[kind=primary]{background:linear-gradient(90deg,#7c3aed,#4f46e5);border:0;color:#fff;font-weight:700}
+.mobile-hint{display:none}
+@media (max-width:640px){
+ .block-container{padding:3.2rem .7rem 3rem !important}
+ .hero{padding:14px 16px;border-radius:14px;margin-bottom:10px}
+ .hero h1{font-size:28px}.hero p{font-size:13px}
+ button[data-baseweb=tab]{padding:8px 10px;font-size:14px}
+ [data-testid=stMetricValue]{font-size:1.25rem}[data-testid=stMetricLabel]{font-size:.8rem}
+ .stButton>button,.stDownloadButton>button{width:100%;min-height:46px}
+ h2,h3{font-size:1.15rem !important}
+ .mobile-hint{display:block;background:#1b1740;color:#e0e7ff;padding:8px 12px;border-radius:10px;font-size:13px;margin-bottom:10px}
+}
+</style>""", unsafe_allow_html=True)
+st.markdown(f"<div class='hero'><h1>⚡ {APP_NAME}</h1><p>{TAGLINE} · Smart crypto futures signals</p></div>", unsafe_allow_html=True)
+_chips = ""
+for _, _r in mk[mk.price > 0].head(8).iterrows():
+    _chips += (f"<span class='chip'><b>{_r.base}</b>{fmt(_r.price)}"
+               f"<i class='{'up' if _r.chg >= 0 else 'dn'}'>{_r.chg:+.2f}%</i></span>")
+if _chips:
+    st.markdown(f"<div class='ticker'>{_chips}</div>", unsafe_allow_html=True)
 st.markdown("<div class='mobile-hint'>" + t("📱 Tap the ☰ / arrow at the top-left to choose exchange, coin and settings.",
             "📱 exchange, coin සහ සැකසුම් තෝරන්න උඩ වම් කෙළවරේ ☰ / ඊතලය ඔබන්න.") + "</div>", unsafe_allow_html=True)
 tf_default = qp.get("tf") if qp.get("tf") in TF else "5m"
@@ -529,7 +573,9 @@ def tab_signal():
     dd, sc = d.tail(150), score_df(d)
     upm, dnm = (sc >= THR) & (sc.shift() < THR), (sc <= -THR) & (sc.shift() > -THR)
     fig = make_subplots(rows=3, cols=1, shared_xaxes=True, row_heights=[0.6, 0.2, 0.2], vertical_spacing=0.03)
-    fig.add_trace(go.Candlestick(x=dd.time, open=dd.open, high=dd.high, low=dd.low, close=dd.close, name="Price"), row=1, col=1)
+    fig.add_trace(go.Candlestick(x=dd.time, open=dd.open, high=dd.high, low=dd.low, close=dd.close, name="Price",
+                                 increasing_line_color="#0ecb81", increasing_fillcolor="#0ecb81",
+                                 decreasing_line_color="#f6465d", decreasing_fillcolor="#f6465d"), row=1, col=1)
     for nn, col in [(9, "#f5a623"), (21, "#4a90e2"), (50, "#9b59b6"), (200, "#7f8c8d")]:
         fig.add_trace(go.Scatter(x=dd.time, y=dd[f"ema{nn}"], name=f"EMA{nn}", line=dict(width=1, color=col)), row=1, col=1)
     fig.add_trace(go.Scatter(x=dd.time[upm[dd.index]], y=dd.low[upm[dd.index]] * 0.999, mode="markers", name="Long",
@@ -542,9 +588,12 @@ def tab_signal():
     fig.add_trace(go.Scatter(x=dd.time, y=dd.rsi, name="RSI", line=dict(color="#e67e22")), row=2, col=1)
     fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
     fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
-    fig.add_trace(go.Bar(x=dd.time, y=dd.macd_h, name="MACD hist"), row=3, col=1)
-    fig.update_layout(height=620, xaxis_rangeslider_visible=False, margin=dict(l=5, r=5, t=5, b=5),
+    fig.add_trace(go.Bar(x=dd.time, y=dd.macd_h, name="MACD hist", marker_color=["#0ecb81" if v >= 0 else "#f6465d" for v in dd.macd_h]), row=3, col=1)
+    fig.update_layout(template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                      height=620, xaxis_rangeslider_visible=False, margin=dict(l=5, r=5, t=5, b=5),
                       legend=dict(orientation='h', y=1.02, x=0))
+    fig.update_xaxes(gridcolor="#1e2329")
+    fig.update_yaxes(gridcolor="#1e2329")
     st.plotly_chart(fig, use_container_width=True)
 
     st.subheader(t("Reality check: this strategy on this pair's history", "Reality check: මෙම pair එකේ ඉතිහාසයේ strategy එක"))
