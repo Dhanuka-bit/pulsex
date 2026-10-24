@@ -15,6 +15,16 @@ from plotly.subplots import make_subplots
 
 APP_NAME, TAGLINE = "PulseX", "Catch every move."
 st.set_page_config(page_title=f"{APP_NAME} · Crypto Signals", page_icon="⚡", layout="wide")
+splash = st.empty()
+if not st.session_state.get("_booted"):  # only on the first load of a visit, not on every refresh
+    splash.markdown(brand.splash_html(APP_NAME), unsafe_allow_html=True)
+
+
+def end_splash():
+    splash.empty()
+    st.session_state["_booted"] = True
+
+
 st.sidebar.markdown(brand.sidebar_logo(APP_NAME), unsafe_allow_html=True)
 t = i18n.setup()
 
@@ -352,6 +362,7 @@ OK = reachable()
 if not OK:
     with _L:
         _C.pop(("reachable",), None)  # don't remember a total failure
+    end_splash()
     st.error(t("No exchange could be reached from this server. Please try again in a minute.",
                "මෙම server එකෙන් කිසිදු exchange එකකට සම්බන්ධ විය නොහැක. විනාඩියකින් නැවත උත්සාහ කරන්න."))
     st.stop()
@@ -370,6 +381,7 @@ P["ex"] = ex_pref
 try:
     ex, mk = market_any(ex_pref)
 except Exception as e:
+    end_splash()
     st.error(t("Exchange data could not be loaded.", "Exchange දත්ත load කළ නොහැක.") + f" ({e})")
     st.stop()
 if show_ex and len(OK) < len(EX):
@@ -743,6 +755,7 @@ def tab_guide():
 
 {"signal": tab_signal, "scan": tab_scan, "new": tab_new, "fund": tab_fund, "guide": tab_guide,
  "port": lambda: accounts.portfolio_tab(t, mk, fmt)}[page]()
+end_splash()
 
 st.caption("⚠️ " + t("Educational tool, not financial advice. Signals are probabilities, never guarantees. Leveraged futures can wipe out your account - always use a stop-loss.",
                       "අධ්‍යාපනික මෙවලමකි, මූල්‍ය උපදෙස් නොවේ. Signals සම්භාවිතාවන් මිස සහතික නොවේ. Leverage සහිත futures වලින් ඔබේ ගිණුම සම්පූර්ණයෙන් අහිමි විය හැක - හැමවිටම stop-loss භාවිතා කරන්න."))

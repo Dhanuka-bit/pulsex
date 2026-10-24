@@ -162,3 +162,40 @@ button[kind=segmented_controlActive]{background:linear-gradient(90deg,#7c3aed,#4
  .mobile-hint{display:block;background:#1b1740;color:#e0e7ff;padding:8px 12px;border-radius:10px;font-size:13px;margin-bottom:10px}
 }
 </style>"""
+
+
+_ECG = ("<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 300 50'><defs><linearGradient id='e' x1='0' x2='1'>"
+        "<stop offset='0' stop-color='#7c3aed'/><stop offset='1' stop-color='#22d3ee'/></linearGradient></defs>"
+        "<path d='M0 25H92l10-19 16 40 14-27 8 6H300' fill='none' stroke='url(#e)' stroke-width='3' "
+        "stroke-linecap='round' stroke-linejoin='round'/></svg>")
+
+
+def splash_html(name):
+    """Full-screen loading animation (pure CSS). It also fades out by itself after 15s as a safety net."""
+    css = """<style>
+#px-splash{position:fixed;inset:0;z-index:999999;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;
+ background:radial-gradient(circle at 50% 35%,#2e1065 0%,#0b0e11 62%);color:#fff;animation:pxOut .6s ease 15s forwards}
+.px-logo{position:relative;width:104px;height:104px;animation:pxBeat 1.2s ease-in-out infinite}
+.px-logo img{width:104px;height:104px;display:block;filter:drop-shadow(0 0 18px rgba(124,58,237,.7))}
+.px-ring{position:absolute;inset:-6px;border-radius:50%;border:2px solid rgba(167,139,250,.65);animation:pxRing 1.8s ease-out infinite}
+.px-ring.b{animation-delay:.9s}
+.px-brand{font-size:34px;font-weight:800;letter-spacing:6px;margin-top:6px}
+.px-brand span{background:linear-gradient(90deg,#a78bfa,#22d3ee);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+.px-ecg{width:min(300px,72vw);height:50px;background:url("ECGURI") center/100% 100% no-repeat;animation:pxScan 1.9s ease-in-out infinite}
+.px-bar{width:min(240px,60vw);height:4px;border-radius:4px;background:rgba(255,255,255,.12);overflow:hidden}
+.px-bar i{display:block;height:100%;width:40%;border-radius:4px;background:linear-gradient(90deg,#7c3aed,#22d3ee);animation:pxBar 1.3s ease-in-out infinite}
+.px-msg{position:relative;height:20px;width:min(320px,80vw);text-align:center;font-size:13.5px;color:#c4b5fd}
+.px-msg span{position:absolute;left:0;right:0;opacity:0;animation:pxMsg 6s infinite}
+.px-msg span:nth-child(2){animation-delay:2s}.px-msg span:nth-child(3){animation-delay:4s}
+@keyframes pxBeat{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+@keyframes pxRing{0%{transform:scale(.9);opacity:.9}100%{transform:scale(1.7);opacity:0}}
+@keyframes pxScan{0%{clip-path:inset(0 100% 0 0);opacity:1}60%{clip-path:inset(0 0 0 0);opacity:1}100%{clip-path:inset(0 0 0 0);opacity:0}}
+@keyframes pxBar{0%{transform:translateX(-110%)}100%{transform:translateX(260%)}}
+@keyframes pxMsg{0%{opacity:0;transform:translateY(6px)}6%,30%{opacity:1;transform:none}36%,100%{opacity:0}}
+@keyframes pxOut{to{opacity:0;visibility:hidden;pointer-events:none}}
+</style>""".replace("ECGURI", _b64svg(_ECG))
+    html = ("<div id='px-splash'><div class='px-logo'><div class='px-ring'></div><div class='px-ring b'></div>"
+            + logo_img(104) + "</div><div class='px-brand'>" + _wordmark(name) + "</div><div class='px-ecg'></div>"
+            "<div class='px-bar'><i></i></div><div class='px-msg'><span>Connecting to exchanges…</span>"
+            "<span>Reading the order books…</span><span>Crunching 30+ indicators…</span></div></div>")
+    return css + html
