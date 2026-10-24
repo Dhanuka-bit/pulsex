@@ -333,8 +333,8 @@ def card(side, grade, head, sub):
     ico = {"LONG": "🟢", "SHORT": "🔴", "WAIT": "🟡"}[side]
     g = f" · {grade}" if grade else ""
     st.markdown(
-        f"<div style='background:{col};color:#fff;padding:18px 22px;border-radius:16px'>"
-        f"<div style='font-size:36px;font-weight:800;line-height:1.1'>{ico} {side}{g}</div>"
+        f"<div style='background:{col};color:#fff;padding:clamp(12px,3.5vw,18px) clamp(14px,4vw,22px);border-radius:16px'>"
+        f"<div style='font-size:clamp(26px,8vw,36px);font-weight:800;line-height:1.1'>{ico} {side}{g}</div>"
         f"<div style='font-size:15px;margin-top:6px;opacity:.95'>{head}</div>"
         f"<div style='font-size:14px;margin-top:6px;opacity:.9'>{sub}</div></div>", unsafe_allow_html=True)
 
@@ -388,9 +388,24 @@ st.markdown(
     "background:linear-gradient(90deg,#fff,#a5b4fc,#67e8f9);-webkit-background-clip:text;-webkit-text-fill-color:transparent}"
     ".hero p{margin:4px 0 0;opacity:.85;font-size:16px}"
     "button[data-baseweb=tab]{font-weight:600}"
+    ".mobile-hint{display:none}"
+    "@media (max-width:640px){"
+    ".block-container{padding:3.2rem .7rem 3rem !important}"
+    ".hero{padding:14px 16px;border-radius:14px;margin-bottom:10px}"
+    ".hero h1{font-size:28px}.hero p{font-size:13px}"
+    "button[data-baseweb=tab]{padding:8px 10px;font-size:14px}"
+    "[data-testid=stMetricValue]{font-size:1.25rem}"
+    "[data-testid=stMetricLabel]{font-size:.8rem}"
+    ".stButton>button,.stDownloadButton>button{width:100%;min-height:46px}"
+    "h2,h3{font-size:1.15rem !important}"
+    ".mobile-hint{display:block;background:#312e81;color:#e0e7ff;padding:8px 12px;border-radius:10px;"
+    "font-size:13px;margin-bottom:10px}"
+    "}"
     "</style>"
     f"<div class='hero'><h1>⚡ {APP_NAME}</h1><p>{TAGLINE} · Smart crypto futures signals</p></div>",
     unsafe_allow_html=True)
+st.markdown("<div class='mobile-hint'>" + t("📱 Tap the ☰ / arrow at the top-left to choose exchange, coin and settings.",
+            "📱 exchange, coin සහ සැකසුම් තෝරන්න උඩ වම් කෙළවරේ ☰ / ඊතලය ඔබන්න.") + "</div>", unsafe_allow_html=True)
 tf_default = qp.get("tf") if qp.get("tf") in TF else "5m"
 if hasattr(st, "segmented_control"):
     tf_label = st.segmented_control(t("Timeframe", "කාල රාමුව"), list(TF), default=tf_default, key="tf_sel") or tf_default
@@ -528,7 +543,8 @@ def tab_signal():
     fig.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
     fig.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
     fig.add_trace(go.Bar(x=dd.time, y=dd.macd_h, name="MACD hist"), row=3, col=1)
-    fig.update_layout(height=720, xaxis_rangeslider_visible=False, margin=dict(l=5, r=5, t=5, b=5))
+    fig.update_layout(height=620, xaxis_rangeslider_visible=False, margin=dict(l=5, r=5, t=5, b=5),
+                      legend=dict(orientation='h', y=1.02, x=0))
     st.plotly_chart(fig, use_container_width=True)
 
     st.subheader(t("Reality check: this strategy on this pair's history", "Reality check: මෙම pair එකේ ඉතිහාසයේ strategy එක"))
