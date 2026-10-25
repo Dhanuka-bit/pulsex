@@ -15,6 +15,7 @@ import ui
 import funda
 import markets
 import ai
+import style
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -30,14 +31,19 @@ def end_splash():
     st.session_state["_booted"] = True
 
 
-st.sidebar.markdown(brand.sidebar_logo(APP_NAME), unsafe_allow_html=True)
-t = i18n.setup()
+sb_head = st.sidebar.container(key="drawerhead")
+sb_set = st.sidebar.container(key="drawerset")
+sb_trade = st.sidebar.container(key="drawertrade")
+sb_foot = st.sidebar.container(key="drawerfoot")
+t = i18n.setup(sb_set)
 if "w_theme" not in st.session_state:
     _qt = st.query_params.get("theme")
     st.session_state["w_theme"] = _qt if _qt in theme.PALETTES else "Dark"
-with st.sidebar.expander(t("🎨 Appearance", "🎨 පෙනුම")):
-    theme_name = st.selectbox(t("Colour theme", "වර්ණ තේමාව"), list(theme.PALETTES), key="w_theme")
-    accent = st.color_picker(t("Accent colour", "Accent වර්ණය"), theme.PALETTES[theme_name]["accent"], key=f"w_accent_{theme_name}")
+with sb_set:
+    theme_name = st.selectbox(t("Theme", "තේමාව"), list(theme.PALETTES), key="w_theme")
+    st.selectbox(t("Default currency", "මුදල් වර්ගය"), list(markets.CURRENCIES), key="mk_cur")
+    with st.expander(t("🎨 Custom accent colour", "🎨 අභිමත accent වර්ණය")):
+        accent = st.color_picker(t("Accent colour", "Accent වර්ණය"), theme.PALETTES[theme_name]["accent"], key=f"w_accent_{theme_name}")
 
 
 TF = {"1m": 1, "3m": 3, "5m": 5, "15m": 15, "30m": 30, "1h": 60, "2h": 120,
@@ -338,30 +344,50 @@ def card(side, grade, head, sub):
 
 
 # ---------------- Header & navigation ----------------
-st.markdown(theme.css(theme_name, accent) + ui.css() + brand.css() + markets.css() + ai.css() + brand.nav_css(), unsafe_allow_html=True)
 NAV = ["markets", "alpha", "search", "port", "community"]
-_NAVL = {"markets": "📊 " + t("Markets"), "alpha": "⚡ Alpha", "search": "🔍 " + t("Search"),
-         "port": "💼 " + t("Portfolio"), "community": "👥 " + t("Community")}
-_nv = st.session_state.get("nav")
-if _nv:
-    st.session_state["_nav_prev"] = _nv
-nav_state = _nv or st.session_state.get("_nav_prev", "markets")
+_NAVL = {"markets": t("Markets"), "alpha": "Alpha", "search": t("Search"), "port": t("Portfolio"), "community": t("Community")}
+_TILEL = {"ai": "AI", "scan": t("Scanner"), "port": t("Portfolio"), "guide": t("Guide")}
+nav_state = st.session_state.get("nav") or "markets"
 sub_state = st.session_state.get("alpha_sub") or st.session_state.get("_sub_prev", "signal")
 st.session_state["_sub_prev"] = sub_state
 view = "ai" if st.session_state.get("_ai") else (sub_state if nav_state == "alpha" else nav_state)
 page = view
+
+
+def _go(k):
+    st.session_state.update(nav=k, _ai=False)
+
+
+def _tile(k):
+    if k == "ai":
+        st.session_state.update(_ai=True)
+    elif k == "scan":
+        st.session_state.update(nav="alpha", alpha_sub="scan", _ai=False)
+    elif k == "port":
+        st.session_state.update(nav="port", _ai=False)
+    else:
+        st.session_state.update(nav="community", _ai=False)
+
+
+style.inject(theme.css(theme_name, accent), ui.css(), brand.css(), markets.css(), ai.css(),
+             style.shell_css(None if view == "ai" else nav_state, _NAVL, _TILEL))
+accounts.sidebar_box(t, sb_head)
+with sb_head:
+    with st.container(key="tiles"):
+        for _k, _ic in (("ai", "smart_toy"), ("scan", "radar"), ("port", "pie_chart"), ("guide", "menu_book")):
+            st.button(f":material/{_ic}:", key=f"tile_{_k}", on_click=_tile, args=(_k,))
 _titles = {"markets": t("Markets"), "signal": "Alpha", "scan": "Alpha", "new": "Alpha", "search": t("Search"),
            "port": t("Portfolio"), "community": t("Community"), "ai": "PULSEX AI"}
 _u = accounts.user() if accounts.enabled() else None
+_ini = ((_u.get("name") or _u["email"])[:1].upper() if _u else "G")
 st.markdown(f"<div class='appbar'><div class='ttl'>{ui.esc(_titles[view])}</div><div class='acts'><span class='ib'>💎</span>"
-            f"<span class='ib'>🔍</span><span class='av'>{ui.esc(_u['email'][:1].upper() if _u else 'G')}</span></div></div>", unsafe_allow_html=True)
+            f"<span class='ib'>🔍</span><span class='av'>{ui.esc(_ini)}</span></div></div>", unsafe_allow_html=True)
 with st.container(key="bottomnav"):
-    st.segmented_control("nav", NAV, format_func=lambda k: _NAVL[k], key="nav", label_visibility="collapsed",
-                         on_change=lambda: st.session_state.update(_ai=False),
-                         **({} if "nav" in st.session_state else {"default": "markets"}))
+    for _k in NAV:
+        st.button(f":material/{style.NAV_ICONS[_k]}:", key=f"nav_{_k}", on_click=_go, args=(_k,))
 if view != "ai":
     with st.container(key="fabwrap"):
-        st.button("🤖", key="fab", help="PULSEX AI", on_click=lambda: st.session_state.update(_ai=True))
+        st.button(":material/smart_toy:", key="fab", help="PULSEX AI", on_click=lambda: st.session_state.update(_ai=True))
 if nav_state == "alpha" and view != "ai":
     st.segmented_control("alpha_sub", ["signal", "scan", "new"], key="alpha_sub", label_visibility="collapsed",
                          format_func=lambda k: {"signal": t("⚡ Signal"), "scan": t("🔎 Scanner"), "new": t("🆕 New listings")}[k],
@@ -370,7 +396,6 @@ if nav_state == "alpha" and view != "ai":
 # ---------------- Sidebar (only shows what the current page needs) ----------------
 P = st.session_state.setdefault("_P", {})  # remembers every setting while its widget is hidden
 qp = st.query_params
-accounts.sidebar_box(t)
 OK = reachable()
 if not OK:
     with _L:
@@ -383,11 +408,13 @@ show_ex = view in ("signal", "scan", "new", "search")
 show_coin = view == "signal"
 show_adv = view in ("signal", "scan")
 
+if show_ex:
+    sb_trade.markdown(f"<div class='dh'>{t('Trading settings', 'ට්‍රේඩින් සැකසුම්')}</div>", unsafe_allow_html=True)
 _ex0 = P.get("ex") if P.get("ex") in OK else (qp.get("ex") if qp.get("ex") in OK else OK[0])
 if show_ex:
     if st.session_state.get("w_ex") not in OK:
         st.session_state["w_ex"] = _ex0
-    ex_pref = st.sidebar.selectbox(t("Exchange (futures)", "එක්ස්චේන්ජ් එක (futures)"), OK, key="w_ex")
+    ex_pref = sb_trade.selectbox(t("Exchange (futures)", "එක්ස්චේන්ජ් එක (futures)"), OK, key="w_ex")
 else:
     ex_pref = _ex0
 P["ex"] = ex_pref
@@ -398,7 +425,7 @@ except Exception as e:
     st.error(t("Exchange data could not be loaded.", "Exchange දත්ත load කළ නොහැක.") + f" ({e})")
     st.stop()
 if show_ex and len(OK) < len(EX):
-    st.sidebar.caption(t("ℹ️ Only exchanges available from this server are listed.",
+    sb_trade.caption(t("ℹ️ Only exchanges available from this server are listed.",
                          "ℹ️ මෙම server එකෙන් සම්බන්ධ විය හැකි exchanges පමණක් පෙන්වයි."))
 coins = list(dict.fromkeys(mk.base))
 NEW = set(mk[(mk.listed > 0) & ((time.time() * 1000 - mk.listed) < 14 * 86400000)].base)
@@ -406,7 +433,7 @@ cur = st.session_state.get("coin_sel", P.get("coin", qp.get("coin", "BTC")))
 cur = cur if cur in coins else ("BTC" if "BTC" in coins else coins[0])
 if show_coin:
     st.session_state["coin_sel"] = cur
-    coin = st.sidebar.selectbox(t(f"Coin ({len(coins)} pairs - type to search)", f"කොයින් එක (pairs {len(coins)} - ටයිප් කර සොයන්න)"),
+    coin = sb_trade.selectbox(t(f"Coin ({len(coins)} pairs - type to search)", f"කොයින් එක (pairs {len(coins)} - ටයිප් කර සොයන්න)"),
                                 coins, key="coin_sel", format_func=lambda c: f"{c} 🆕" if c in NEW else c)
 elif view == "search":
     st.session_state["coin_sel"] = cur
@@ -420,7 +447,7 @@ ADV = {"sens": "Balanced", "strict": True, "smart": True, "atr_mult": 1.5, "clos
 if show_adv:
     for _k, _d in ADV.items():
         st.session_state.setdefault("w_" + _k, P.get(_k, _d))
-    with st.sidebar.expander(t("⚙️ Advanced settings", "⚙️ උසස් සැකසුම්")):
+    with sb_trade.expander(t("⚙️ Advanced settings", "⚙️ උසස් සැකසුම්")):
         sens = st.radio(t("Sensitivity", "සංවේදීතාව"), ["Conservative", "Balanced", "Aggressive"], key="w_sens",
                         help=t("Conservative = fewer but stronger signals", "Conservative = signals අඩුයි, නමුත් ශක්තිමත්"))
         strict = st.checkbox(t("Strict accuracy mode", "Strict accuracy mode"), key="w_strict",
@@ -444,8 +471,11 @@ if refresh != "Off":
         st_autorefresh(interval=int(refresh[:-1]) * 1000, key="auto")
     except ImportError:
         pass
-st.sidebar.caption(t("🌓 Light / Dark: tap ⋮ (top-right) → Settings → Theme",
-                     "🌓 Light / Dark: උඩ දකුණේ ⋮ → Settings → Theme"))
+with sb_foot:
+    accounts.logout_box(t, st)
+    _links = [(ai._secret(k), n) for k, n in (("TELEGRAM_URL", "Telegram"), ("WHATSAPP_URL", "WhatsApp"), ("X_URL", "X"), ("YOUTUBE_URL", "YouTube"))]
+    st.markdown(brand.sidebar_logo(APP_NAME) + "<div class='dfoot'>" + "".join(funda._link(u, n) for u, n in _links if u)
+                + "<div>© 2026 Software owners</div></div>", unsafe_allow_html=True)
 
 tf_default = P.get("tf") if P.get("tf") in TF else (qp.get("tf") if qp.get("tf") in TF else "5m")
 if view in ("signal", "scan"):

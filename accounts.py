@@ -28,13 +28,52 @@ def user():
     return st.session_state.get("user")
 
 
-def sidebar_box(t):
+def _initial(u):
+    return html.escape(((u.get("name") or u["email"])[:1]).upper())
+
+
+def sidebar_box(t, box=None):
+    """Profile card (+ login form for guests). Rendered into the drawer container `box`."""
+    box = box or st.sidebar
     if not enabled():
+        box.markdown(f"<div class='acct'><div class='av'>G</div><div><b>{t('Hi, Guest', 'ආයුබෝවන්')}</b></div></div>", unsafe_allow_html=True)
         return
     u = user()
     if u:
-        st.sidebar.markdown(f"<div class='acct'><div class='av'>{html.escape(u['email'][:1].upper())}</div><div><b>{html.escape(u['email'])}</b><span>{t('Signed in', 'ඇතුල් වී ඇත')}</span></div></div>", unsafe_allow_html=True)
-        if st.sidebar.button(t("Log out", "ලොග් අවුට්")):
+        nm = html.escape(u.get("name") or u["email"].split("@")[0].title())
+        box.markdown(f"<div class='acct'><div class='av'>{_initial(u)}</div><div><b>{t('Hi', 'ආයුබෝවන්')}, {nm}</b>"
+                     f"<span>{html.escape(u['email'])}</span></div></div>", unsafe_allow_html=True)
+        return
+    box.markdown(f"<div class='acct'><div class='av'>G</div><div><b>{t('Hi, Guest', 'ආයුබෝවන්')}</b>"
+                 f"<span>{t('Sign in to keep your own portfolio', 'ඔබේම portfolio එකක් තියාගන්න ලොගින් වන්න')}</span></div></div>", unsafe_allow_html=True)
+    with box.expander(t("🔐 Login / Create account", "🔐 ලොගින් / ගිණුමක් හදන්න")):
+        mode = st.radio("mode", [t("Login", "ලොගින්"), t("Sign up", "ගිණුම හදන්න")], horizontal=True, label_visibility="collapsed")
+        signup = mode != t("Login", "ලොගින්")
+        nm = st.text_input(t("Your name", "ඔබේ නම")) if signup else ""
+        email = st.text_input("Email")
+        pw = st.text_input(t("Password (min 6)", "මුරපදය (අවම 6)"), type="password")
+        if st.button(t("Continue", "ඉදිරියට"), type="primary"):
+            try:
+                sb = _client()
+                if not signup:
+                    res = sb.auth.sign_in_with_password({"email": email.strip(), "password": pw})
+                else:
+                    res = sb.auth.sign_up({"email": email.strip(), "password": pw, "options": {"data": {"name": nm.strip()}}})
+                if res.session:
+                    meta = getattr(res.user, "user_metadata", None) or {}
+                    st.session_state["user"] = {"id": res.user.id, "email": res.user.email, "name": meta.get("name") or nm.strip()}
+                    st.rerun()
+                else:
+                    st.success(t("Account created. Check your email and click the confirmation link, then log in.",
+                                 "ගිණුම හැදුවා. ඊමේල් එක බලලා confirmation link එක click කරලා ඉන්පස්සේ ලොගින් වෙන්න."))
+            except Exception as e:
+                st.error(t("Failed: ", "අසාර්ථකයි: ") + str(e))
+
+
+def logout_box(t, box=None):
+    box = box or st.sidebar
+    if enabled() and user():
+        if box.button(t("Log out", "ලොග් අවුට්"), key="logout", icon=":material/logout:", use_container_width=True):
             try:
                 _client().auth.sign_out()
             except Exception:
@@ -42,29 +81,6 @@ def sidebar_box(t):
             for k in ("user", "sb"):
                 st.session_state.pop(k, None)
             st.rerun()
-        return
-    st.sidebar.markdown(f"<div class='acct'><div class='av'>G</div><div><b>{t('Guest', 'අමුත්තා')}</b><span>{t('Sign in to keep your own portfolio', 'ඔබේම portfolio එකක් තියාගන්න ලොගින් වන්න')}</span></div></div>", unsafe_allow_html=True)
-    with st.sidebar.expander(t("👤 Login / Create account (optional)", "👤 ලොගින් / ගිණුමක් හදන්න (අනිවාර්ය නැත)")):
-        mode = st.radio("", [t("Login", "ලොගින්"), t("Sign up", "ගිණුම හදන්න")], horizontal=True, label_visibility="collapsed")
-        email = st.text_input("Email")
-        pw = st.text_input(t("Password (min 6)", "මුරපදය (අවම 6)"), type="password")
-        if st.button(t("Continue", "ඉදිරියට"), type="primary"):
-            try:
-                sb = _client()
-                if mode == t("Login", "ලොගින්"):
-                    res = sb.auth.sign_in_with_password({"email": email.strip(), "password": pw})
-                    st.session_state["user"] = {"id": res.user.id, "email": res.user.email}
-                    st.rerun()
-                else:
-                    res = sb.auth.sign_up({"email": email.strip(), "password": pw})
-                    if res.session:
-                        st.session_state["user"] = {"id": res.user.id, "email": res.user.email}
-                        st.rerun()
-                    else:
-                        st.success(t("Account created. Check your email and click the confirmation link, then log in.",
-                                     "ගිණුම හැදුවා. ඊමේල් එක බලලා confirmation link එක click කරලා ඉන්පස්සේ ලොගින් වෙන්න."))
-            except Exception as e:
-                st.error(t("Failed: ", "අසාර්ථකයි: ") + str(e))
 
 
 def portfolio_tab(t, mk, fmt):

@@ -91,11 +91,11 @@ def _guess():
     return "English"
 
 
-def setup():
+def setup(container=None):
     """Draw the language picker and return t(en, si=None)."""
     if "lang" not in st.session_state:
         st.session_state["lang"] = _guess()
-    name = st.sidebar.selectbox("🌐 Language / භාෂාව", list(LANGS), key="lang")
+    name = (container or st.sidebar).selectbox("🌐 Language", list(LANGS), key="lang")
     code = LANGS[name]
     if code in RTL:
         st.markdown("<style>.stApp{direction:rtl}</style>", unsafe_allow_html=True)
