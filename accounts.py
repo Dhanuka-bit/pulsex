@@ -1,4 +1,5 @@
 """Optional accounts + personal portfolio (Supabase). Signals work without login."""
+import html
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timezone
@@ -32,7 +33,7 @@ def sidebar_box(t):
         return
     u = user()
     if u:
-        st.sidebar.success("👤 " + u["email"])
+        st.sidebar.markdown(f"<div class='acct'><div class='av'>{html.escape(u['email'][:1].upper())}</div><div><b>{html.escape(u['email'])}</b><span>{t('Signed in', 'ඇතුල් වී ඇත')}</span></div></div>", unsafe_allow_html=True)
         if st.sidebar.button(t("Log out", "ලොග් අවුට්")):
             try:
                 _client().auth.sign_out()
@@ -42,6 +43,7 @@ def sidebar_box(t):
                 st.session_state.pop(k, None)
             st.rerun()
         return
+    st.sidebar.markdown(f"<div class='acct'><div class='av'>G</div><div><b>{t('Guest', 'අමුත්තා')}</b><span>{t('Sign in to keep your own portfolio', 'ඔබේම portfolio එකක් තියාගන්න ලොගින් වන්න')}</span></div></div>", unsafe_allow_html=True)
     with st.sidebar.expander(t("👤 Login / Create account (optional)", "👤 ලොගින් / ගිණුමක් හදන්න (අනිවාර්ය නැත)")):
         mode = st.radio("", [t("Login", "ලොගින්"), t("Sign up", "ගිණුම හදන්න")], horizontal=True, label_visibility="collapsed")
         email = st.text_input("Email")

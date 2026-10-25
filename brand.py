@@ -199,3 +199,28 @@ def splash_html(name):
             "<div class='px-bar'><i></i></div><div class='px-msg'><span>Connecting to exchanges…</span>"
             "<span>Reading the order books…</span><span>Crunching 30+ indicators…</span></div></div>")
     return css + html
+
+
+def nav_css():
+    return """<style>
+.st-key-bottomnav{position:fixed;left:0;right:0;bottom:0;z-index:1001;padding:6px 8px calc(6px + env(safe-area-inset-bottom));
+ background:color-mix(in srgb,var(--bg2) 82%,transparent);backdrop-filter:blur(16px);border-top:1px solid var(--border)}
+.st-key-bottomnav [data-testid=stButtonGroup]{flex-wrap:nowrap;gap:4px;width:100%}
+.st-key-bottomnav button{flex:1 1 0;min-width:0;padding:7px 2px !important;font-size:11px !important;border-radius:12px !important;
+ background:transparent !important;border:0 !important;color:var(--muted) !important;box-shadow:none !important;white-space:normal;line-height:1.15}
+.st-key-bottomnav button[kind=segmented_controlActive],.st-key-bottomnav [data-testid=stBaseButton-segmented_controlActive]{
+ background:color-mix(in srgb,var(--accent) 24%,transparent) !important;color:var(--text) !important}
+.block-container{padding-bottom:100px !important}
+.st-key-fabwrap{position:fixed;right:14px;bottom:88px;z-index:1002}
+.st-key-fabwrap button{width:54px;height:54px;border-radius:50% !important;font-size:22px;padding:0 !important;
+ background:linear-gradient(135deg,var(--accent),var(--accent2)) !important;color:#fff !important;border:0 !important;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+[data-testid=stSidebarCollapsedControl] button,[data-testid=stExpandSidebarButton]{background:var(--bg3) !important;border:1px solid var(--border) !important;
+ border-radius:12px !important;color:var(--text) !important}
+[data-testid=stSidebar]{backdrop-filter:blur(14px)}
+.acct{display:flex;align-items:center;gap:10px;background:var(--bg3);border:1px solid var(--border);border-radius:14px;padding:10px 12px;margin-bottom:10px}
+.acct .av{width:38px;height:38px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;color:#fff;
+ background:linear-gradient(135deg,var(--accent),var(--accent2))}
+.acct b{display:block;font-size:13.5px;color:var(--text);overflow-wrap:anywhere}.acct span{font-size:11.5px;color:var(--muted)}
+@media (min-width:900px){.st-key-bottomnav{position:static;border:1px solid var(--border);border-radius:16px;margin-bottom:12px}
+ .block-container{padding-bottom:3rem !important}.st-key-fabwrap{bottom:24px}}
+</style>"""

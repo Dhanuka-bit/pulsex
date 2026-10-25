@@ -13,6 +13,8 @@ import brand
 import theme
 import ui
 import funda
+import markets
+import ai
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -336,32 +338,34 @@ def card(side, grade, head, sub):
 
 
 # ---------------- Header & navigation ----------------
-st.markdown(theme.css(theme_name, accent) + ui.css() + brand.css(), unsafe_allow_html=True)
-_nl = len(i18n.LANGS)
-st.markdown(brand.hero_html(APP_NAME, TAGLINE, [
-    t("⚡ Live signals", "⚡ සජීවී signals"), t("🔎 Market scanner", "🔎 වෙළඳපොළ ස්කෑනර්"),
-    t(f"🌐 {_nl} languages", f"🌐 භාෂා {_nl}ක්"), t("🌓 Light & dark", "🌓 Light සහ Dark"),
-    t("🆓 Free to use", "🆓 නොමිලේ")]), unsafe_allow_html=True)
-tick = st.empty()
-st.markdown("<div class='mobile-hint'>" + t("📱 Tap the ☰ / arrow at the top-left to choose exchange, coin and settings.",
-            "📱 exchange, coin සහ සැකසුම් තෝරන්න උඩ වම් කෙළවරේ ☰ / ඊතලය ඔබන්න.") + "</div>", unsafe_allow_html=True)
-
-PAGES = ["signal", "scan", "new", "fund", "port", "guide"]
-
-
-def _nav_label(k):
-    return {"signal": t("⚡ Signal", "⚡ Signal"), "scan": t("🔎 Scanner", "🔎 ස්කෑනර්"),
-            "new": t("🆕 New listings", "🆕 අලුත් coins"), "fund": t("📊 Fundamentals", "📊 මූලික දත්ත"),
-            "port": t("💼 Portfolio", "💼 Portfolio"), "guide": t("❓ Guide", "❓ මාර්ගෝපදේශය")}[k]
-
-
-if hasattr(st, "segmented_control"):
-    _pg = st.segmented_control("nav", PAGES, format_func=_nav_label, key="nav", label_visibility="collapsed",
-                               **({} if "nav" in st.session_state else {"default": "signal"}))
-else:
-    _pg = st.radio("nav", PAGES, format_func=_nav_label, key="nav", horizontal=True, label_visibility="collapsed")
-page = _pg or st.session_state.get("_page", "signal")
-st.session_state["_page"] = page
+st.markdown(theme.css(theme_name, accent) + ui.css() + brand.css() + markets.css() + ai.css() + brand.nav_css(), unsafe_allow_html=True)
+NAV = ["markets", "alpha", "search", "port", "community"]
+_NAVL = {"markets": "📊 " + t("Markets"), "alpha": "⚡ Alpha", "search": "🔍 " + t("Search"),
+         "port": "💼 " + t("Portfolio"), "community": "👥 " + t("Community")}
+_nv = st.session_state.get("nav")
+if _nv:
+    st.session_state["_nav_prev"] = _nv
+nav_state = _nv or st.session_state.get("_nav_prev", "markets")
+sub_state = st.session_state.get("alpha_sub") or st.session_state.get("_sub_prev", "signal")
+st.session_state["_sub_prev"] = sub_state
+view = "ai" if st.session_state.get("_ai") else (sub_state if nav_state == "alpha" else nav_state)
+page = view
+_titles = {"markets": t("Markets"), "signal": "Alpha", "scan": "Alpha", "new": "Alpha", "search": t("Search"),
+           "port": t("Portfolio"), "community": t("Community"), "ai": "PULSEX AI"}
+_u = accounts.user() if accounts.enabled() else None
+st.markdown(f"<div class='appbar'><div class='ttl'>{ui.esc(_titles[view])}</div><div class='acts'><span class='ib'>💎</span>"
+            f"<span class='ib'>🔍</span><span class='av'>{ui.esc(_u['email'][:1].upper() if _u else 'G')}</span></div></div>", unsafe_allow_html=True)
+with st.container(key="bottomnav"):
+    st.segmented_control("nav", NAV, format_func=lambda k: _NAVL[k], key="nav", label_visibility="collapsed",
+                         on_change=lambda: st.session_state.update(_ai=False),
+                         **({} if "nav" in st.session_state else {"default": "markets"}))
+if view != "ai":
+    with st.container(key="fabwrap"):
+        st.button("🤖", key="fab", help="PULSEX AI", on_click=lambda: st.session_state.update(_ai=True))
+if nav_state == "alpha" and view != "ai":
+    st.segmented_control("alpha_sub", ["signal", "scan", "new"], key="alpha_sub", label_visibility="collapsed",
+                         format_func=lambda k: {"signal": t("⚡ Signal"), "scan": t("🔎 Scanner"), "new": t("🆕 New listings")}[k],
+                         **({} if "alpha_sub" in st.session_state else {"default": "signal"}))
 
 # ---------------- Sidebar (only shows what the current page needs) ----------------
 P = st.session_state.setdefault("_P", {})  # remembers every setting while its widget is hidden
@@ -375,9 +379,9 @@ if not OK:
     st.error(t("No exchange could be reached from this server. Please try again in a minute.",
                "මෙම server එකෙන් කිසිදු exchange එකකට සම්බන්ධ විය නොහැක. විනාඩියකින් නැවත උත්සාහ කරන්න."))
     st.stop()
-show_ex = page in ("signal", "scan", "new", "fund")
-show_coin = page in ("signal", "fund")
-show_adv = page in ("signal", "scan")
+show_ex = view in ("signal", "scan", "new", "search")
+show_coin = view == "signal"
+show_adv = view in ("signal", "scan")
 
 _ex0 = P.get("ex") if P.get("ex") in OK else (qp.get("ex") if qp.get("ex") in OK else OK[0])
 if show_ex:
@@ -404,6 +408,9 @@ if show_coin:
     st.session_state["coin_sel"] = cur
     coin = st.sidebar.selectbox(t(f"Coin ({len(coins)} pairs - type to search)", f"කොයින් එක (pairs {len(coins)} - ටයිප් කර සොයන්න)"),
                                 coins, key="coin_sel", format_func=lambda c: f"{c} 🆕" if c in NEW else c)
+elif view == "search":
+    st.session_state["coin_sel"] = cur
+    coin = st.selectbox(t("🔍 Search a coin"), coins, key="coin_sel", format_func=lambda c: f"{c} 🆕" if c in NEW else c)
 else:
     coin = cur
 P["coin"] = coin
@@ -440,16 +447,8 @@ if refresh != "Off":
 st.sidebar.caption(t("🌓 Light / Dark: tap ⋮ (top-right) → Settings → Theme",
                      "🌓 Light / Dark: උඩ දකුණේ ⋮ → Settings → Theme"))
 
-_chips = ""
-for _, _r in mk[mk.price > 0].head(8).iterrows():
-    _chips += (f"<span class='chip'><b>{_r.base}</b>{fmt(_r.price)}"
-               f"<i class='{'up' if _r.chg >= 0 else 'dn'}'>{_r.chg:+.2f}%</i></span>")
-_gb = funda.global_bar(t)
-if _chips or _gb:
-    tick.markdown(_gb + f"<div class='ticker'>{_chips}</div>", unsafe_allow_html=True)
-
 tf_default = P.get("tf") if P.get("tf") in TF else (qp.get("tf") if qp.get("tf") in TF else "5m")
-if page in ("signal", "scan"):
+if view in ("signal", "scan"):
     if hasattr(st, "segmented_control"):
         tf_label = st.segmented_control(t("Timeframe", "කාල රාමුව"), list(TF), default=tf_default, key="tf_sel") or tf_default
     else:
@@ -460,7 +459,7 @@ P["tf"] = tf_label
 tfm = int(custom_tf) if custom_tf > 0 else TF[tf_label]
 if custom_tf > 0:
     tf_label = f"{custom_tf}m"
-if page in ("signal", "scan"):
+if view in ("signal", "scan"):
     _ico, _nm, _hold, _noise, _tip = (
         ("⚡", "Scalping", "minutes to 1 hour", "High", "Tight stops, small size, watch the fees") if tfm <= 5 else
         ("🕒", "Intraday", "1 to 12 hours", "Medium", "A good balance of speed and reliability") if tfm <= 60 else
@@ -508,6 +507,20 @@ def tab_signal():
             except Exception:
                 pass
         hb.append(v)
+    btc_b = 0
+    if coin != "BTC":
+        try:
+            btc_b = htf_bias(load(used, "BTC", h1 or 60, 300)[2])
+        except Exception:
+            pass
+    fund_ok = None  # liquidity / dilution check from CoinGecko (unknown for very new or unlisted coins)
+    try:
+        fmd = cg(coin).get("market_data") or {}
+        f_mc, f_vol, f_fdv = ((fmd.get(k) or {}).get("usd") for k in ("market_cap", "total_volume", "fully_diluted_valuation"))
+        if f_mc and f_vol:
+            fund_ok = not (f_vol / f_mc < 0.01 or (f_fdv and f_fdv / f_mc > 6))
+    except Exception:
+        pass
     fr, ob = funding(used, s), obi(used, s)
     fadj = 0.0 if fr is None else (-0.5 if fr > 0.0005 else (0.5 if fr < -0.0005 else 0.0))
     oadj = 0.0 if ob is None else (0.5 if ob > 0.2 else (-0.5 if ob < -0.2 else 0.0))
@@ -539,13 +552,15 @@ def tab_signal():
             (t("Supertrend agrees", "Supertrend එකඟයි"), l.st_dir * sg > 0, False),
             (t("Volume flow confirms (OBV + MFI)", "Volume flow තහවුරු කරයි (OBV + MFI)"), None if flow == 0 else flow * sg > 0, False),
             (t("No opposing RSI divergence", "විරුද්ධ RSI divergence නැත"), not opp_div, True),
+            (t("Fundamentals OK (liquidity, dilution)", "මූලික දත්ත හරි (liquidity, dilution)"), fund_ok, True),
+            (t("Bitcoin trend agrees (altcoins)", "Bitcoin trend එකඟයි (altcoins)"), None if coin == "BTC" or btc_b == 0 else btc_b * sg > 0, False),
             (t("Market is active (not dead / squeezed)", "වෙළඳපොළ සක්‍රීයයි (මළ / squeeze නොවේ)"), not (l.atr_rank < 0.10), False),
             (t("Backtest shows an edge on this pair", "මෙම pair එකේ backtest ජයග්‍රාහී"), edge, True),
         ]
         chk = [(a_, v_) for a_, v_, _ in chk3]
         fails = [a_ for a_, v_, h_ in chk3 if v_ is False and h_]
         oks = sum(1 for _, v_, _h in chk3 if v_ is True)
-        grade = "A+" if oks >= 9 else "A" if oks >= 7 else "B" if oks >= 5 else "C"
+        grade = "A+" if oks >= 10 else "A" if oks >= 8 else "B" if oks >= 6 else "C"
         if strict and (fails or oks < 5):
             side = "WAIT"
     strength = min(100, abs(total) / 9 * 100)
@@ -643,7 +658,7 @@ def tab_signal():
 
 def pick_coin(c):
     st.session_state["coin_sel"] = c
-    st.session_state["nav"] = "signal"
+    st.session_state.update(nav="alpha", alpha_sub="signal", _ai=False)
     st.session_state.setdefault("_P", {})["coin"] = c
 
 
@@ -763,8 +778,102 @@ def tab_guide():
 **අවදානම් නීති:** stop-loss හැමවිටම භාවිතා කරන්න, එක ට්‍රේඩ් එකකට 1% හෝ අඩුවෙන් අවදානම් වන්න, උපරිම leverage කිසිවිටක පාවිච්චි කරන්න එපා, ලොකු news වෙලාවල ට්‍රේඩ් නොකරන්න."""))
 
 
-{"signal": tab_signal, "scan": tab_scan, "new": tab_new, "fund": tab_fund, "guide": tab_guide,
- "port": lambda: accounts.portfolio_tab(t, mk, fmt)}[page]()
+def quick_analysis(sym, tf_min=60):
+    """Fast read of one coin for the AI assistant and the Search page (the Alpha > Signal page is stricter)."""
+    used, _s, raw = load(ex, sym, tf_min)
+    d = ind(raw).iloc[:-1]
+    if len(d) < 70:
+        raise ValueError("not enough candles")
+    l, sc = d.iloc[-1], float(score_df(d).iloc[-1])
+    h = next((m for m in LADDER if m >= 3 * tf_min), None)
+    hb_ = 0
+    if h:
+        try:
+            hb_ = htf_bias(load(used, sym, h, 300)[2])
+        except Exception:
+            pass
+    total = sc + hb_
+    side = "LONG" if total >= THR else "SHORT" if total <= -THR else "WAIT"
+    px, sg = float(raw.close.iloc[-1]), (1 if total >= 0 else -1)
+    r = float(l.atr) * atr_mult
+    return dict(side=side, tf=f"{tf_min}m", strength=min(100.0, abs(total) / 9 * 100), price=px, adx=float(l.adx), rsi=float(l.rsi),
+                htf=hb_, st=float(l.st_dir), sl=px - sg * r, tp1=px + sg * r, tp2=px + sg * 2 * r)
+
+
+def ai_ctx():
+    try:
+        qa = quick_analysis(coin, 60)
+        sel = (f"Selected coin {coin} (1h, {ex}): {qa['side']}, strength {qa['strength']:.0f}%, price {qa['price']:.6g}, "
+               f"ADX {qa['adx']:.0f}, RSI {qa['rsi']:.0f}, stop {qa['sl']:.6g}, TP1 {qa['tp1']:.6g}, TP2 {qa['tp2']:.6g}")
+    except Exception:
+        sel = f"Selected coin {coin}: live analysis unavailable"
+    return sel + "\n" + markets.context_text()
+
+
+def pred_one(args):
+    base, _p, vol, chg = args
+    try:
+        _, _, raw = load(ex, base, 60, 300)
+        d = ind(raw).iloc[:-1]
+        sc, l = float(score_df(d).iloc[-1]), d.iloc[-1]
+        return {"Coin": base, "Signal": "LONG" if sc >= THR else ("SHORT" if sc <= -THR else "WAIT"),
+                "Strength %": round(min(100, abs(sc) / 9 * 100)), "Price": fmt(l.close), "24h %": round(chg, 2),
+                "Vol (M USDT)": round(vol / 1e6, 1), "RSI": round(float(l.rsi), 1), "ADX": round(float(l.adx), 1)}
+    except Exception:
+        return None
+
+
+@cached(120)
+def predictions_html():
+    rows = list(mk.head(14)[["base", "price", "vol", "chg"]].itertuples(index=False, name=None))
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        out = [x for x in pool.map(pred_one, rows) if x and x["Signal"] != "WAIT"]
+    if not out:
+        return "<div class='about'>" + ui.esc(t("No strong 1h signals among the most traded coins right now.")) + "</div>"
+    return scan_table(pd.DataFrame(out).sort_values("Strength %", ascending=False))
+
+
+def page_markets():
+    markets.render(t, predictions_html)
+
+
+def page_search():
+    try:
+        j = cg(coin)
+        j["market_data"]
+    except Exception:
+        j = None
+    try:
+        qa = quick_analysis(coin, 60)
+        card(qa["side"], "", f"{coin}/USDT · 1h · " + t("strength") + f" {qa['strength']:.0f}%",
+             t(f"Idea: stop-loss {qa['sl']:.6g}, TP1 {qa['tp1']:.6g}, TP2 {qa['tp2']:.6g}. Quick read only; open Alpha for the strict analysis.") if qa["side"] != "WAIT"
+             else t("No clear edge right now. Waiting is a position."))
+        st.button(t("⚡ Open full analysis"), on_click=pick_coin, args=(coin,), type="primary")
+    except Exception:
+        st.caption(t("Live signal not available for this coin."))
+    if j:
+        funda.render(j, t)
+    else:
+        st.warning(t("Fundamental data not available (very new coin or CoinGecko limit).", "මූලික දත්ත නැත (ඉතා අලුත් coin එකක් හෝ CoinGecko සීමාව)."))
+
+
+def page_community():
+    st.markdown(brand.hero_html(APP_NAME, TAGLINE, [t("⚡ Live signals"), t("🔎 Market scanner"), t(f"🌐 {len(i18n.LANGS)} languages"), t("🆓 Free to use")]),
+                unsafe_allow_html=True)
+    links = [(ai._secret(k), n) for k, n in (("TELEGRAM_URL", "Telegram"), ("WHATSAPP_URL", "WhatsApp"), ("X_URL", "X / Twitter"), ("YOUTUBE_URL", "YouTube"))]
+    chips = "".join(funda._link(u, n) for u, n in links if u)
+    if chips:
+        st.markdown(ui.title(t("Join the community")) + chips, unsafe_allow_html=True)
+    st.markdown(ui.title(t("How PulseX works")), unsafe_allow_html=True)
+    tab_guide()
+
+
+def page_ai():
+    ai.render(t, coins, quick_analysis, ai_ctx)
+
+
+{"markets": page_markets, "signal": tab_signal, "scan": tab_scan, "new": tab_new, "search": page_search,
+ "port": lambda: accounts.portfolio_tab(t, mk, fmt), "community": page_community, "ai": page_ai}[view]()
 end_splash()
 
 st.caption("⚠️ " + t("Educational tool, not financial advice. Signals are probabilities, never guarantees. Leveraged futures can wipe out your account - always use a stop-loss.",

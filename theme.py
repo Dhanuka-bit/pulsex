@@ -1,7 +1,7 @@
 """Colour themes. Applied with CSS variables so the user can pick any palette (and a custom accent) inside the app."""
 
 PALETTES = {
-    "Dark":     dict(bg="#0b0e11", bg2="#11151a", bg3="#1a1f26", text="#eaecef", muted="#848e9c", border="#2b3139",
+    "Dark":     dict(bg="#0b0e14", bg2="#121824", bg3="#1a2233", text="#eaecef", muted="#8792a8", border="#25304a",
                      accent="#7c3aed", accent2="#22d3ee", up="#0ecb81", down="#f6465d", scheme="dark"),
     "Midnight": dict(bg="#070b1a", bg2="#0c1330", bg3="#141d45", text="#e6ecff", muted="#8a97c7", border="#25306b",
                      accent="#3b82f6", accent2="#22d3ee", up="#34d399", down="#fb7185", scheme="dark"),

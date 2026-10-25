@@ -63,7 +63,7 @@ def _tr(text, code):
 
 def _literals():
     found = set()
-    for fn in ("app.py", "accounts.py", "funda.py"):
+    for fn in ("app.py", "accounts.py", "funda.py", "markets.py", "ai.py"):
         try:
             with open(os.path.join(_HERE, fn), encoding="utf-8") as f:
                 tree = ast.parse(f.read())
